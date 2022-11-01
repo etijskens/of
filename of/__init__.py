@@ -8,7 +8,7 @@ Top-level package for of.
 """
 
 import of.cli_ofrun
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 nCoresPerNode = {
     'leibniz' :  28
@@ -44,7 +44,8 @@ module list
 source $FOAM_BASH
 
 # Preprocessing
-blockMesh"""
+blockMesh
+"""
     if nCores == 1:
         script += """renumberMesh -overwrite
 

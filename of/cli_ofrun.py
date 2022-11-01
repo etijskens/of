@@ -117,10 +117,10 @@ def main( case, destination
         f.write(jobscript)
 
     if submit:
-        cmd = ['sbatch', case_path.name]
+        cmd = ['sbatch', script_path.name]
         print(f'  > {" ".join(cmd)}')
         subprocess.run(cmd, cwd=dest_path)
-        click.echo(click.style(f"Job script '{script_path}' submitted.", fg='green'))
+        click.echo(click.style(f"Job script '{script_path}' submitted in directory '{dest_path}'.", fg='green'))
     else:
         click.echo(click.style(f"Job script '{script_path}' not submitted.", fg='red'))
 
