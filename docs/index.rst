@@ -8,6 +8,7 @@ Welcome to of's documentation!
 
    readme
    installation
+   apps
    api
    authors
    changelog

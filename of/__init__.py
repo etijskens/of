@@ -7,16 +7,12 @@ Package of
 Top-level package for of.
 """
 
+import of.cli_ofrun
 __version__ = "0.0.0"
 
+nCoresPerNode = {
+    'leibniz' :  28
+  , 'vaughan' :  64
+  , 'hortense': 128
+}
 
-def hello(who='world'):
-    """'Hello world' method.
-
-    :param str who: whom to say hello to
-    :returns: a string
-    """
-    result = "Hello " + who
-    return result
-
-# Your code here...
