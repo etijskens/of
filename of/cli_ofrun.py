@@ -103,7 +103,7 @@ def main( case, destination
       , nCores=nCores
       , walltime=of.walltime(walltime)
       , case_name=case_name
-      , openfoam_solver='icofoam'
+      , openfoam_solver='icoFoam'
     )
     script_path = dest_path / f'{case_name}.slurm'
     if verbosity > 1:

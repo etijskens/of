@@ -8,7 +8,7 @@ Top-level package for of.
 """
 
 import of.cli_ofrun
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 nCoresPerNode = {
     'leibniz' :  28
@@ -59,6 +59,6 @@ decomposePar
 mpirun -np {nCores} renumberMesh -parallel -overwrite
 
 # Processing
-mpirun -np {nCores} icoFoam -parallel >& {case_name}.log"""
+mpirun -np {nCores} {openfoam_solver} -parallel >& {case_name}.log"""
     # print(script)
     return script.format(nNodes=nNodes, nCores=nCores, walltime=walltime, case_name=case_name, openfoam_solver=openfoam_solver)
