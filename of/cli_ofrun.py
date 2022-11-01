@@ -6,6 +6,7 @@ sys.path.insert(0,'.')
 
 import click
 from pathlib import Path
+import subprocess
 import shutil
 
 import of
@@ -26,16 +27,32 @@ import of
              , help='number of nodes requested. Sets ncores to the maximum number of physical cores on a node.'
              , default=1
              )
+@click.option('-w', '--walltime'
+             , help='walltime limit of the job.'
+             , default=1
+             )
+@click.option('-o', '--overwrite'
+             , help='overwrite the case directory if it already exists.'
+             , is_flag=True, default=False
+             )
+@click.option('-s', '--submit'
+             , help='submit the job.'
+             , is_flag=True, default=False
+             )
 @click.option('-v', '--verbosity', count=True
              , help="The verbosity of the program."
              , default=0
              )
 def main( case, destination
         , ncores, nnodes
+        , walltime
+        , overwrite
+        , submit
         , verbosity):
     """Command line interface ofrun.
 
-    Copy an OpenFOAM case and run it with a number of nodes or cores for performance evaluation
+    Copy an OpenFOAM case and run it with a number of nodes or cores for performance evaluation.
+    Create and submit job.
     """
 
     #  verify that case path exists
@@ -57,29 +74,57 @@ def main( case, destination
     cluster = os.environ['VSC_INSTITUTE_CLUSTER']
     if cluster in ('local',''):
         cluster = 'local-machine'
-        nnodes = 1
+        nNodes = 1
         nCoresPerNode = ncores
     else:
-        nCoresPerNode = of.nCoresPerNode[cluster] if nnodes > 1 else ncores
+        nNodes = nnodes
+        nCoresPerNode = of.nCoresPerNode[cluster] if nNodes > 1 else ncores
 
-    ncores = nCoresPerNode * nnodes
+    nCores = nCoresPerNode * nnodes
 
     if verbosity:
         click.echo('cluster = ' + click.style(f"{cluster}", fg='green'))
-        click.echo('nnodes  = ' + click.style(f"{nnodes}", fg='green'))
-        click.echo('corespn = ' + click.style(f"{nCoresPerNode}", fg='green'))
-        click.echo('ncores  = ' + click.style(f"{ncores}", fg='green'))
+        click.echo('nNodes  = ' + click.style(f"{nNodes}", fg='green'))
+        click.echo('nCoresPerNode = ' + click.style(f"{nCoresPerNode}", fg='green'))
+        click.echo('ncores  = ' + click.style(f"{nCores}", fg='green'))
 
     case_name = case_path.name+'-{}x{}cores'.format(nnodes, nCoresPerNode)
+    dest_path = dest_path / case_name
     if verbosity:
         click.echo('case_name = ' + click.style(f"{case_name}", fg='green'))
 
-    dest_path = dest_path / case_name
-
+    if overwrite:
+        shutil.rmtree(dest_path, ignore_errors=True)
     shutil.copytree(case_path, dest_path)
 
+    # jobscript
+    jobscript = of.jobscript(
+        nNodes=nNodes
+      , nCores=nCores
+      , walltime=of.walltime(walltime)
+      , case_name=case_name
+      , openfoam_solver='icofoam'
+    )
+    script_path = dest_path / f'{case_name}.slurm'
+    if verbosity > 1:
+        line = 80 * '-'
+        print(line)
+        click.echo('jobscript = ' + click.style(f"{script_path}", fg='green'))
+        print(line)
+        click.secho(jobscript, fg='green')
+        print(line)
+    with open( script_path, mode='w') as f:
+        f.write(jobscript)
+
+    if submit:
+        cmd = ['sbatch', case_path.name]
+        print(f'  > {" ".join(cmd)}')
+        subprocess.run(cmd, cwd=dest_path)
+        click.echo(click.style(f"Job script '{script_path}' submitted.", fg='green'))
+    else:
+        click.echo(click.style(f"Job script '{script_path}' not submitted.", fg='red'))
+
+
 if __name__ == "__main__":
-
-
     sys.exit(main())  # pragma: no cover
 #eof
