@@ -7,12 +7,13 @@ Package of
 Top-level package for of.
 """
 import os
+from pydoc import cli
 import click
 from pathlib import Path
 import subprocess
 import shutil
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 
 NCORESPERNODE = {
     'leibniz' :  28
@@ -121,6 +122,11 @@ def run( case
 
     if overwrite:
         shutil.rmtree(dest_path, ignore_errors=True)
+    else:
+        if dest_path.exists():
+            click.secho(f"{dest_path} already exists.", fg='blue')
+            return
+        
     shutil.copytree(case_path, dest_path)
 
     # jobscript
