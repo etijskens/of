@@ -6,14 +6,18 @@ Package of
 
 Top-level package for of.
 """
+from tkinter.ttk import LabeledScale
 import os
-from pydoc import cli
+import re
 import click
 from pathlib import Path
 import subprocess
 import shutil
+import numpy as np
+from matplotlib import pyplot
 
-__version__ = "0.1.4"
+
+__version__ = "0.1.5"
 
 NCORESPERNODE = {
     'leibniz' :  28
@@ -38,8 +42,8 @@ def jobscript(nNodes, nCores, walltime, case_name, openfoam_solver):
 #SBATCH --nodes={nNodes} --exclusive
 #SBATCH --time={walltime}
 #SBATCH --job-name={case_name}
-#SBATCH -o %x.%j.stdout
-#SBATCH -e %x.%j.stderr
+#SBATCH -o %x.stdout
+#SBATCH -e %x.stderr
 
 # Prepare OpenFOAM environment
 module --force purge
@@ -155,3 +159,148 @@ def run( case
         click.echo(click.style(f"Job script '{script_path}' submitted in directory '{dest_path}'.", fg='green'))
     else:
         click.echo(click.style(f"Job script '{script_path}' not submitted.", fg='red'))
+
+
+def get_mean_walltime_per_timestep(file):
+    if file.is_dir():
+        file = file / (file.name + '.log')
+    
+    with open(file) as f:
+        ExecutionTimes = []
+        for line in f:
+            match = re.match(r'ExecutionTime = (\d+(\.\d*)?)', line)
+            if match:
+                w = float(match.group(1))
+                # print(f"    walltime = {w}")
+                ExecutionTimes.append(w)
+                # print(ExecutionTimes)
+        ExecutionTimes = np.array(ExecutionTimes)
+        # OpenFOAM's ExecutionTime is the elapsed time since the start.
+        # Hence, we need to diff and average 
+        time_per_timestep = np.diff(ExecutionTimes)
+        # print(time_per_timestep)
+        mean_walltime_per_timestep = np.mean(time_per_timestep) 
+        # print(mean_walltime_per_timestep)
+    return mean_walltime_per_timestep
+
+
+def get_ncells(file):
+    if file.is_dir():
+        file = file / (file.name + '.stdout')
+    with open(file) as f:
+         for line in f:
+            match = re.match(r'  nCells: (\d+)', line)
+            if match:
+                ncells = int(match.group(1))
+                return ncells       
+
+
+def postprocess(case, location='.', verbosity=0):
+    """Postprocess results of run().
+    
+    :param str case: name of the case directory
+    :param str|Path location: parent directory containing the results
+    """
+    location = Path(location)
+    if not location.exists():
+        raise FileNotFoundError(location)
+    
+    s = case + r'-(\d+)x(\d+)cores'
+    dirs = []
+    n_cores = []
+    for item in location.glob('*'):
+        if item.is_dir():
+            m = re.match(s, str(item.name))
+            if m:
+                n = int(m[1]) * int(m[2])
+                n_cores.append(n)
+                dirs.append(item)
+    n_cores = np.array(n_cores)
+    p = n_cores.argsort()
+    n_cores = n_cores[p]
+    dirs = np.array(dirs)[p]
+    walltimes = []
+    n_cells = []
+    for dir in dirs:
+        walltimes.append(get_mean_walltime_per_timestep(dir))
+        n_cells.append(get_ncells(dir))
+    n_cells = np.array(n_cells)
+    walltimes = np.array(walltimes)
+    cpu_times = walltimes * n_cores
+    cells_per_core = n_cells / n_cores
+    speedup = walltimes[0]/walltimes
+    parallel_efficiency = speedup/n_cores
+    
+    d = {
+        '# cores' : n_cores
+      , 'walltime per timestep' : walltimes
+      , 'cpu_time per timestep' : cpu_times
+      , 'cells per core' : cells_per_core
+      , 'speedup' : speedup
+      , 'parallel efficiency' : parallel_efficiency
+    }
+    
+    print()
+    print(f"{     ' ':>10}{'walltime':>10}{'cpu_time':>10}{'#cells':>10}{      ' ':>8}{         ' ':>11}")
+    print(f"{     ' ':>10}{     'per':>10}{     'per':>10}{   'per':>10}{      ' ':>8}{  'parallel':>11}")
+    print(f"{'#cores':>10}{'timestep':>10}{'timestep':>10}{  'core':>10}{'speedup':>8}{'efficiency':>11}")
+    print()
+    for i in range(len(n_cores)):
+        print(f"{n_cores[i]:>10}{walltimes[i]:>10.3f}{cpu_times[i]:>10.3f}{cells_per_core[i]:>10.0f}{speedup[i]:>8.1f}{parallel_efficiency[i]:>11.3f}")
+    
+    # # plot the histogram and pdf
+    fig = pyplot.figure()
+    ax1 = fig.add_subplot(111)
+    ax2 = ax1.twiny()
+    
+    ax1.plot(n_cores, parallel_efficiency, 'o-')
+    ax1.set_title(case)
+    ax1.set_xlabel('# cores')
+    ax1.set_ylabel('parallel efficiency')
+    # ax1.set_axis([0, n_cores[-1], 0, 1])
+    ax1.set_xscale('log')
+    ax2_tick_locations = n_cores
+
+    def tick_function(ncores):
+        labels = []
+        for i in range(len(ncores)):
+            label = f'{ncores[i]}'
+            labels.append(label)
+        return labels
+
+    ax2.set_xscale('log')
+    ax2.set_xlim(ax1.get_xlim())
+    ax2.set_xticks(ax2_tick_locations)
+    ax2.set_xticklabels(tick_function(ax2_tick_locations))
+    
+    for i in range(len(cells_per_core)):
+        ax2.plot( [n_cores[i], n_cores[i]], [0,1])
+        pyplot.text(n_cores[i],0,f'{int(cells_per_core[i])} cells/core', rotation=90)
+    
+    pyplot.savefig(str(location / (case + ".parallel_efficiency.png")), dpi=200)
+    pyplot.show()
+    # pyplot.xlabel('nCores', fontsize='x-large')
+    # pyplot.ylabel('FVOPS per node', fontsize='x-large')
+    # pyplot.title(titlePNG, fontsize='x-large')
+    # pyplot.plot(gridElemPerRank, FVOPS, '-k')
+    # #pyplot.axis([0, 25, 0, 0.15])
+    # pyplot.xticks(fontsize='large')
+    # pyplot.yticks(fontsize='large')
+    # pyplot.xscale('log')
+    # pyplot.gcf().set_size_inches(6,4.5)
+    # #fmtr = matplotlib.ticker.StrMethodFormatter('${x:,.2f}')
+    # #pyplot.axis.yaxis.set_major_formatter(fmtr)
+    # #current_values = pyplot.gca().get_yticks()
+    # #pyplot.gca().set_yticklabels(['{:,.2f}'.format(x) for x in current_values])
+    # pyplot.ticklabel_format(axis='y', style='sci', scilimits=(6,6))
+    # #y_labels = pyplot.get_yticks()
+    # #pyplot.yaxis.set_major_formatter(ticker.FormatStrFormatter('%1.2e'))
+    # pyplot.savefig(fileName+".png", dpi=200)
+    # pyplot.show()
+
+    return d
+    
+    
+if __name__ == "__main__":
+    postprocess(case='fixedIter', location='/user/antwerpen/201/vsc20170/scratch/workspace/exafoam/hpc/microbenchmarks/cavity-3d/1M')
+    print("-*# finished #*-")
