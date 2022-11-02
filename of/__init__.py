@@ -17,7 +17,8 @@ import numpy as np
 from matplotlib import pyplot
 
 
-__version__ = "0.1.5"
+import of.cli_pp-strong
+__version__ = "0.2.0"
 
 NCORESPERNODE = {
     'leibniz' :  28
@@ -195,8 +196,8 @@ def get_ncells(file):
                 return ncells       
 
 
-def postprocess(case, location='.', verbosity=0):
-    """Postprocess results of run().
+def pp_strong(case, location='.', verbosity=0):
+    """Postprocess strong scaling test results.
     
     :param str case: name of the case directory
     :param str|Path location: parent directory containing the results
@@ -248,7 +249,7 @@ def postprocess(case, location='.', verbosity=0):
     for i in range(len(n_cores)):
         print(f"{n_cores[i]:>10}{walltimes[i]:>10.3f}{cpu_times[i]:>10.3f}{cells_per_core[i]:>10.0f}{speedup[i]:>8.1f}{parallel_efficiency[i]:>11.3f}")
     
-    # # plot the histogram and pdf
+    # Produce plot and save .png
     fig = pyplot.figure()
     ax1 = fig.add_subplot(111)
     ax2 = ax1.twiny()
@@ -279,24 +280,6 @@ def postprocess(case, location='.', verbosity=0):
     
     pyplot.savefig(str(location / (case + ".parallel_efficiency.png")), dpi=200)
     pyplot.show()
-    # pyplot.xlabel('nCores', fontsize='x-large')
-    # pyplot.ylabel('FVOPS per node', fontsize='x-large')
-    # pyplot.title(titlePNG, fontsize='x-large')
-    # pyplot.plot(gridElemPerRank, FVOPS, '-k')
-    # #pyplot.axis([0, 25, 0, 0.15])
-    # pyplot.xticks(fontsize='large')
-    # pyplot.yticks(fontsize='large')
-    # pyplot.xscale('log')
-    # pyplot.gcf().set_size_inches(6,4.5)
-    # #fmtr = matplotlib.ticker.StrMethodFormatter('${x:,.2f}')
-    # #pyplot.axis.yaxis.set_major_formatter(fmtr)
-    # #current_values = pyplot.gca().get_yticks()
-    # #pyplot.gca().set_yticklabels(['{:,.2f}'.format(x) for x in current_values])
-    # pyplot.ticklabel_format(axis='y', style='sci', scilimits=(6,6))
-    # #y_labels = pyplot.get_yticks()
-    # #pyplot.yaxis.set_major_formatter(ticker.FormatStrFormatter('%1.2e'))
-    # pyplot.savefig(fileName+".png", dpi=200)
-    # pyplot.show()
 
     return d
     
