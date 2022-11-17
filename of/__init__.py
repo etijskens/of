@@ -15,6 +15,7 @@ On Vaughan
 """
 import os
 import re
+from typing import Union
 import click
 from pathlib import Path
 import subprocess
@@ -22,7 +23,7 @@ import shutil
 import numpy as np
 from matplotlib import pyplot
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 #===================================================================================================
 NCORESPERNODE = {
@@ -49,7 +50,7 @@ if VSC_INSTITUTE_CLUSTER not in NCORESPERNODE:
 
 
 #===================================================================================================
-def walltime_to_str(hours):
+def walltime_to_str(hours: Union[int,float]):
     """Convert hours to slurm wall time format HH:MM:SS
 
     :param float hours: walltime in hours.
@@ -106,8 +107,11 @@ mpirun -np {n_tasks} renumberMesh -parallel -overwrite
 
 # Processing
 mpirun -np {n_tasks} {openfoam_solver} -parallel >& {case_name}.log"""
+
+    if not isinstance(walltime, str):
+        walltime_str = walltime_to_str(walltime)
     # print(script)
-    return script.format(n_nodes=n_nodes, n_tasks=n_tasks, walltime=walltime, case_name=case_name, openfoam_solver=openfoam_solver)
+    return script.format(n_nodes=n_nodes, n_tasks=n_tasks, walltime=walltime_str, case_name=case_name, openfoam_solver=openfoam_solver)
 
 
 #===================================================================================================
@@ -128,11 +132,11 @@ def run_all( case:str
     while n_nodes[-1] < max_nodes:
         n_nodes.append(n_nodes[-1] * 2)
         n_tasks.append(n_tasks[-1] * 2)
-    print(n_nodes)
-    print(n_tasks)
+    # print(n_nodes)
+    # print(n_tasks)
         
     for nn, nt in zip(n_nodes, n_tasks):
-        print(nn,nt)
+        # print(nn,nt)
         run1(
             case=case
           , openfoam_solver=openfoam_solver
@@ -150,7 +154,7 @@ def run1( case:str
         , destination:str = ''
         , n_nodes:int = 1
         , n_tasks:int = 1
-        , walltime: float = 1
+        , walltime: Union[int,float,str] = 1
         , overwrite:bool = False
         , submit: bool = False
         , verbosity:bool = 0
@@ -165,7 +169,7 @@ def run1( case:str
     :param destination: path where the case will be copied to
     :param n_nodes: the number of nodes requested
     :param n_tasks: the number of mpi tasks that will be started
-    :param walltime: the walltime requested
+    :param walltime: the walltime requested, either a positive number or a 'HH:MM:SS' str.
     :param overwrite: if True, and the case directory already exists in the destination, the case will be
         removed and recreated (previous results will be lost).
     :param submit: if True the job script will be submitted.
@@ -369,7 +373,7 @@ if __name__ == "__main__":
       , max_nodes = 4
       , walltime = 1
       , overwrite = True
-      , submit = False
+      , submit = True
       , verbosity = 2
     )
     # postprocess(case='fixedIter', location='/user/antwerpen/201/vsc20170/scratch/workspace/exafoam/hpc/microbenchmarks/cavity-3d/1M')
