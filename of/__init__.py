@@ -23,7 +23,7 @@ import shutil
 import numpy as np
 from matplotlib import pyplot
 
-__version__ = "0.3.1"
+__version__ = "0.3.0"
 
 #===================================================================================================
 NCORESPERNODE = {
@@ -182,9 +182,14 @@ def run1( case:str
         raise FileNotFoundError(f"Missing OpenFOAM '{case}'.")
 
     # determine destination path and verify
+    if not destination:
+        # destination == '' (default value)
+        dest_path = (Path(case) / '..' / f'{case_path.name}-strong-scaling-test')
+
     dest_path = case_path.parent if not destination else Path(destination)
     if not dest_path.exists():
-        raise FileNotFoundError(dest_path)
+        # raise FileNotFoundError(dest_path)
+        os.makedirs(dest_path, exist_ok=True)
 
     case_name = case_path.name+'-{}x{}cores'.format(n_nodes, n_tasks if n_nodes == 1 else NCORESPERNODE[VSC_INSTITUTE_CLUSTER])
 
@@ -368,7 +373,11 @@ if __name__ == "__main__":
         case = '/dodrio/scratch/users/vsc20170/prj-astaff/vsc20170/hpc/microbenchmarks/cavity-3d/8M/fixedIter'
     elif VSC_INSTITUTE_CLUSTER == 'vaughan':
         case = '/user/antwerpen/201/vsc20170/scratch/workspace/exafoam/hpc/microbenchmarks/cavity-3d/8M/fixedIter'
-    run_all( case=case
+    case_path = Path(case) 
+    dest_path = (Path(case) / '..' / f'{case_path.name}-strong-scaling-test')
+    
+    run_all( case=case_path
+      , destination = dest_path
       , openfoam_solver = 'icoFoam'     
       , max_nodes = 4
       , walltime = 1
