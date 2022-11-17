@@ -13,13 +13,12 @@ On Vaughan
 
     module load Python
 """
-import os
-import re
+import os, sys, re, subprocess, shutil
 from typing import Union
-import click
 from pathlib import Path
-import subprocess
-import shutil
+from collections import namedtuple
+
+import click
 import numpy as np
 from matplotlib import pyplot
 
@@ -78,7 +77,13 @@ def jobscript(
 #SBATCH --job-name={case_name}
 #SBATCH -o %x.stdout
 #SBATCH -e %x.stderr
+"""
+    if VSC_INSTITUTE_CLUSTER == 'dodrio':
+        script += """#SBATCH --account=astaff
 
+unset SLURM_EXPORT_ENV
+"""
+    script += """
 # Prepare OpenFOAM environment
 module --force purge
 """
@@ -179,7 +184,7 @@ def run1( case:str
     #  verify that case path exists
     case_path = Path(case)
     if not case_path.exists():
-        raise FileNotFoundError(f"Missing OpenFOAM '{case}'.")
+        raise FileNotFoundError(f"Missing OpenFOAM case '{case}'.")
 
     # determine destination path and verify
     if not destination:
@@ -279,50 +284,56 @@ def get_ncells(file):
 
 
 #===================================================================================================
-def pp_strong(case, location='.', verbosity=0):
+def postprocess( location:Union[str,Path] = '.', verbosity: bool = 0):
     """Postprocess strong scaling test results.
     
-    :param str case: name of the case directory
-    :param str|Path location: parent directory containing the results
+    :param location: parent directory containing the results
     """
     location = Path(location)
     if not location.exists():
         raise FileNotFoundError(location)
     
-    s = case + r'-(\d+)x(\d+)cores'
-    dirs = []
+    s = r'(\w+)-(\d+)x(\d+)cores'
+    cases = {}
     n_cores = []
+    Dir = namedtuple('Dir', ['name', 'n_nodes', 'n_tasks'])
     for item in location.glob('*'):
         if item.is_dir():
             m = re.match(s, str(item.name))
             if m:
-                n = int(m[1]) * int(m[2])
-                n_cores.append(n)
-                dirs.append(item)
-    n_cores = np.array(n_cores)
-    p = n_cores.argsort()
-    n_cores = n_cores[p]
-    dirs = np.array(dirs)[p]
-    walltimes = []
-    n_cells = []
-    for dir in dirs:
-        walltimes.append(get_mean_walltime_per_timestep(dir))
-        n_cells.append(get_ncells(dir))
-    n_cells = np.array(n_cells)
-    walltimes = np.array(walltimes)
-    cpu_times = walltimes * n_cores
-    cells_per_core = n_cells / n_cores
-    speedup = walltimes[0]/walltimes
-    parallel_efficiency = speedup/n_cores
+                case = m[1]
+                if not case in cases:
+                    cases[case] = []
+                cases[case].append(Dir( item.name, int(m[2]),  int(m[2]) * int(m[3]) ))
     
-    d = {
-        '# cores' : n_cores
-      , 'walltime per timestep' : walltimes
-      , 'cpu_time per timestep' : cpu_times
-      , 'cells per core' : cells_per_core
-      , 'speedup' : speedup
-      , 'parallel efficiency' : parallel_efficiency
-    }
+    print(f"{cases=}")
+    for case, dirs in cases.items():
+        n_cores = np.array([dir.n_tasks for dir in dirs])
+        dirs = np.array([dir.name for dir in dirs])
+        p = n_cores.argsort()
+        n_cores = n_cores[p]
+        dirs = dirs[p]
+        
+        walltimes = []
+        n_cells = []
+        for dir in dirs:
+            walltimes.append(get_mean_walltime_per_timestep(dir))
+            n_cells.append(get_ncells(dir))
+        n_cells = np.array(n_cells)
+        walltimes = np.array(walltimes)
+        cpu_times = walltimes * n_cores
+        cells_per_core = n_cells / n_cores
+        speedup = walltimes[0]/walltimes
+        parallel_efficiency = speedup/n_cores
+        
+        d = {
+            '# cores' : n_cores
+        , 'walltime per timestep' : walltimes
+        , 'cpu_time per timestep' : cpu_times
+        , 'cells per core' : cells_per_core
+        , 'speedup' : speedup
+        , 'parallel efficiency' : parallel_efficiency
+        }
     
     print()
     print(f"{     ' ':>10}{'walltime':>10}{'cpu_time':>10}{'#cells':>10}{      ' ':>8}{         ' ':>11}")
@@ -369,21 +380,26 @@ def pp_strong(case, location='.', verbosity=0):
     
 #===================================================================================================
 if __name__ == "__main__":
+    pp = True
+
     if VSC_INSTITUTE_CLUSTER == 'dodrio':
-        case = '/dodrio/scratch/users/vsc20170/prj-astaff/vsc20170/hpc/microbenchmarks/cavity-3d/8M/fixedIter'
+        case = '/dodrio/scratch/users/vsc20170/prj-astaff/vsc20170/exafoam/hpc/microbenchmarks/cavity-3d/8M/fixedIter'
     elif VSC_INSTITUTE_CLUSTER == 'vaughan':
         case = '/user/antwerpen/201/vsc20170/scratch/workspace/exafoam/hpc/microbenchmarks/cavity-3d/8M/fixedIter'
     case_path = Path(case) 
     dest_path = (Path(case) / '..' / f'{case_path.name}-strong-scaling-test')
-    
-    run_all( case=case_path
-      , destination = dest_path
-      , openfoam_solver = 'icoFoam'     
-      , max_nodes = 4
-      , walltime = 1
-      , overwrite = True
-      , submit = True
-      , verbosity = 2
-    )
-    # postprocess(case='fixedIter', location='/user/antwerpen/201/vsc20170/scratch/workspace/exafoam/hpc/microbenchmarks/cavity-3d/1M')
+
+    if pp:
+        postprocess(dest_path)
+    else:
+        
+        run_all( case=case_path
+        , destination = dest_path
+        , openfoam_solver = 'icoFoam'     
+        , max_nodes = 4
+        , walltime = 1
+        , overwrite = True
+        , submit = True
+        , verbosity = 2
+        )
     print("-*# finished #*-")
