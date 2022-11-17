@@ -4,9 +4,15 @@
 Package of
 =======================================
 
-Top-level package for of.
+On hortense need
+
+    module load SciPy-bundle
+    module load matplotlibm
+
+On Vaughan 
+
+    module load Python
 """
-from tkinter.ttk import LabeledScale
 import os
 import re
 import click
@@ -16,17 +22,34 @@ import shutil
 import numpy as np
 from matplotlib import pyplot
 
+__version__ = "0.3.0"
 
-import of.cli_pp-strong
-__version__ = "0.2.0"
-
+#===================================================================================================
 NCORESPERNODE = {
     'leibniz' :  28
   , 'vaughan' :  64
-  , 'hortense': 128
+  , 'dodrio'  : 128
 }
 
-def walltimeStr(hours):
+MODULES = {
+    'leibniz' :  [ 'leibniz/supported'
+                 , 'OpenFOAM/v2012-intel-2020a'
+                 ]
+  , 'vaughan' :  [ 'vaughan/2020a'
+                 , 'OpenFOAM/v2012-intel-2020a'
+                 ]
+  , 'dodrio'  :  [ 'cluster/dodrio/cpu_rome'
+                 , 'OpenFOAM/v2206-foss-2022a'
+                 ]     
+}
+
+VSC_INSTITUTE_CLUSTER = os.environ['VSC_INSTITUTE_CLUSTER']
+if VSC_INSTITUTE_CLUSTER not in NCORESPERNODE:
+    raise NotImplementedError(f"Unknown cluster: VSC_INSTITUTE_CLUSTER = '{VSC_INSTITUTE_CLUSTER}'")
+
+
+#===================================================================================================
+def walltime_to_str(hours):
     """Convert hours to slurm wall time format HH:MM:SS
 
     :param float hours: walltime in hours.
@@ -38,9 +61,18 @@ def walltimeStr(hours):
     s = f"{hh}:{mm:02}:{ss:02}"
     return s
 
-def jobscript(nNodes, nCores, walltime, case_name, openfoam_solver):
+
+#===================================================================================================
+def jobscript(
+      n_nodes: int
+    , n_tasks: int
+    , walltime: float
+    , case_name: str
+    , openfoam_solver: str
+    ):
+    
     script = """#!/bin/bash
-#SBATCH --nodes={nNodes} --exclusive
+#SBATCH --nodes={n_nodes} --exclusive
 #SBATCH --time={walltime}
 #SBATCH --job-name={case_name}
 #SBATCH -o %x.stdout
@@ -48,15 +80,19 @@ def jobscript(nNodes, nCores, walltime, case_name, openfoam_solver):
 
 # Prepare OpenFOAM environment
 module --force purge
-module load vaughan/2020a
-module load OpenFOAM/8-intel-2020a
+"""
+    # specify which modules to load
+    for m in MODULES[VSC_INSTITUTE_CLUSTER]:
+        script += f'module load {m}\n'
+
+    script += """
 module list
 source $FOAM_BASH
 
 # Preprocessing
 blockMesh
 """
-    if nCores == 1:
+    if n_tasks == 1:
         script += """renumberMesh -overwrite
 
 # Processing
@@ -64,83 +100,117 @@ blockMesh
 """
     else:
         script += """rm -rf processor*
-foamDictionary -entry numberOfSubdomains -set {nCores} system/decomposeParDict
+foamDictionary -entry numberOfSubdomains -set {n_tasks} system/decomposeParDict
 decomposePar
-mpirun -np {nCores} renumberMesh -parallel -overwrite
+mpirun -np {n_tasks} renumberMesh -parallel -overwrite
 
 # Processing
-mpirun -np {nCores} {openfoam_solver} -parallel >& {case_name}.log"""
+mpirun -np {n_tasks} {openfoam_solver} -parallel >& {case_name}.log"""
     # print(script)
-    return script.format(nNodes=nNodes, nCores=nCores, walltime=walltime, case_name=case_name, openfoam_solver=openfoam_solver)
+    return script.format(n_nodes=n_nodes, n_tasks=n_tasks, walltime=walltime, case_name=case_name, openfoam_solver=openfoam_solver)
 
 
-def run( case
-       , destination=''
-       , ncores=1, nnodes=1
-       , walltime=1
-       , overwrite=False
-       , submit=False
-       , verbosity=0
-       ):
-    """Command line interface ofrun.
+#===================================================================================================
+def run_all( case:str
+        , openfoam_solver:str         
+        , destination:str = ''
+        , max_nodes:int = 1
+        , walltime: float = 1
+        , overwrite:bool = False
+        , submit: bool = False
+        , verbosity:bool = 0
+    ):
+    n_nodes = [1]
+    n_tasks = [NCORESPERNODE[VSC_INSTITUTE_CLUSTER]]
+    while n_tasks[0] != 1:
+        n_tasks.insert(0, n_tasks[0] // 2)
+        n_nodes.insert(0, 1)
+    while n_nodes[-1] < max_nodes:
+        n_nodes.append(n_nodes[-1] * 2)
+        n_tasks.append(n_tasks[-1] * 2)
+    print(n_nodes)
+    print(n_tasks)
+        
+    for nn, nt in zip(n_nodes, n_tasks):
+        print(nn,nt)
+        run1(
+            case=case
+          , openfoam_solver=openfoam_solver
+          , destination=destination
+          , n_nodes = nn
+          , n_tasks = nt
+          , walltime = walltime
+          , overwrite = overwrite
+          , submit = submit
+          , verbosity = verbosity
+        )
+#===================================================================================================
+def run1( case:str
+        , openfoam_solver:str         
+        , destination:str = ''
+        , n_nodes:int = 1
+        , n_tasks:int = 1
+        , walltime: float = 1
+        , overwrite:bool = False
+        , submit: bool = False
+        , verbosity:bool = 0
+    ):
+    """Create and run an OpenFOAM case on n_nodes nodes with n_tasks MPI tasks.
 
     Copy an OpenFOAM case and run it with a number of nodes or cores for performance evaluation.
     Create and submit job.
+    
+    :param case: path to existing OpenFOAM case
+    :param openfoam_solver: name of the solver used in the simulation. (Should be on the PATH).
+    :param destination: path where the case will be copied to
+    :param n_nodes: the number of nodes requested
+    :param n_tasks: the number of mpi tasks that will be started
+    :param walltime: the walltime requested
+    :param overwrite: if True, and the case directory already exists in the destination, the case will be
+        removed and recreated (previous results will be lost).
+    :param submit: if True the job script will be submitted.
+    :param verbosity: print more output, 
+
     """
     #  verify that case path exists
     case_path = Path(case)
     if not case_path.exists():
-        raise FileNotFoundError(case)
-
-    if verbosity:
-        click.echo('case = '+click.style(f"{case}", fg='green'))
+        raise FileNotFoundError(f"Missing OpenFOAM '{case}'.")
 
     # determine destination path and verify
     dest_path = case_path.parent if not destination else Path(destination)
     if not dest_path.exists():
         raise FileNotFoundError(dest_path)
 
-    if verbosity:
-        click.echo('dest = '+click.style(f"{dest_path}", fg='green'))
+    case_name = case_path.name+'-{}x{}cores'.format(n_nodes, n_tasks if n_nodes == 1 else NCORESPERNODE[VSC_INSTITUTE_CLUSTER])
 
-    cluster = os.environ['VSC_INSTITUTE_CLUSTER']
-    if cluster in ('local',''):
-        cluster = 'local-machine'
-        nNodes = 1
-        nCoresPerNode = ncores
-    else:
-        nNodes = nnodes
-        nCoresPerNode = NCORESPERNODE[cluster] if nNodes > 1 else ncores
-
-    nCores = nCoresPerNode * nnodes
-
-    if verbosity:
-        click.echo('cluster = ' + click.style(f"{cluster}", fg='green'))
-        click.echo('nNodes  = ' + click.style(f"{nNodes}", fg='green'))
-        click.echo('nCoresPerNode = ' + click.style(f"{nCoresPerNode}", fg='green'))
-        click.echo('ncores  = ' + click.style(f"{nCores}", fg='green'))
-
-    case_name = case_path.name+'-{}x{}cores'.format(nnodes, nCoresPerNode)
     dest_path = dest_path / case_name
+    click.echo('\nPreparing case ' + click.style(f"{dest_path}", fg='green'))
+
     if verbosity:
-        click.echo('case_name = ' + click.style(f"{case_name}", fg='green'))
+        click.echo('case = '+click.style(f"{case}", fg='green'))
+        click.echo('dest = '+click.style(f"{dest_path}", fg='green'))
+        click.echo('cluster          = ' + click.style(f"{VSC_INSTITUTE_CLUSTER}", fg='green'))
+        click.echo('# nodes          = ' + click.style(f"{n_nodes}", fg='green'))
+        click.echo('# cores per node = ' + click.style(f"{NCORESPERNODE[VSC_INSTITUTE_CLUSTER]}", fg='green'))
+        click.echo('# mpi tasks      = ' + click.style(f"{n_tasks}", fg='green'))
 
     if overwrite:
         shutil.rmtree(dest_path, ignore_errors=True)
     else:
         if dest_path.exists():
-            click.secho(f"{dest_path} already exists.", fg='blue')
+            click.secho(f"destination '{dest_path}' already exists. (Specify overwrite=True to remove and recreate it)", fg='blue')
             return
         
     shutil.copytree(case_path, dest_path)
 
     # jobscript
     job_script = jobscript(
-        nNodes=nNodes
-      , nCores=nCores
-      , walltime=walltimeStr(walltime)
+        n_nodes=n_nodes
+      , n_tasks=n_tasks
+      , walltime=walltime
       , case_name=case_name
-      , openfoam_solver='icoFoam'
+      , openfoam_solver=openfoam_solver
     )
     script_path = dest_path / f'{case_name}.slurm'
     if verbosity > 1:
@@ -162,6 +232,7 @@ def run( case
         click.echo(click.style(f"Job script '{script_path}' not submitted.", fg='red'))
 
 
+#===================================================================================================
 def get_mean_walltime_per_timestep(file):
     if file.is_dir():
         file = file / (file.name + '.log')
@@ -185,7 +256,9 @@ def get_mean_walltime_per_timestep(file):
     return mean_walltime_per_timestep
 
 
+#===================================================================================================
 def get_ncells(file):
+    """Read the number of cells from the OpenFOAM output"""
     if file.is_dir():
         file = file / (file.name + '.stdout')
     with open(file) as f:
@@ -196,6 +269,7 @@ def get_ncells(file):
                 return ncells       
 
 
+#===================================================================================================
 def pp_strong(case, location='.', verbosity=0):
     """Postprocess strong scaling test results.
     
@@ -284,6 +358,15 @@ def pp_strong(case, location='.', verbosity=0):
     return d
     
     
+#===================================================================================================
 if __name__ == "__main__":
-    postprocess(case='fixedIter', location='/user/antwerpen/201/vsc20170/scratch/workspace/exafoam/hpc/microbenchmarks/cavity-3d/1M')
+    run_all( case='/dodrio/scratch/users/vsc20170/prj-astaff/vsc20170/hpc/microbenchmarks/cavity-3d/8M/fixedIter'
+      , openfoam_solver = 'icoFoam'     
+      , max_nodes = 4
+      , walltime = 1
+      , overwrite = True
+      , submit = False
+      , verbosity = 2
+    )
+    # postprocess(case='fixedIter', location='/user/antwerpen/201/vsc20170/scratch/workspace/exafoam/hpc/microbenchmarks/cavity-3d/1M')
     print("-*# finished #*-")
