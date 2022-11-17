@@ -360,7 +360,11 @@ def pp_strong(case, location='.', verbosity=0):
     
 #===================================================================================================
 if __name__ == "__main__":
-    run_all( case='/dodrio/scratch/users/vsc20170/prj-astaff/vsc20170/hpc/microbenchmarks/cavity-3d/8M/fixedIter'
+    if VSC_INSTITUTE_CLUSTER == 'dodrio':
+        case = '/dodrio/scratch/users/vsc20170/prj-astaff/vsc20170/hpc/microbenchmarks/cavity-3d/8M/fixedIter'
+    elif VSC_INSTITUTE_CLUSTER == 'vaughan':
+        case = '/user/antwerpen/201/vsc20170/scratch/workspace/exafoam/hpc/microbenchmarks/cavity-3d/8M/fixedIter'
+    run_all( case=case
       , openfoam_solver = 'icoFoam'     
       , max_nodes = 4
       , walltime = 1
