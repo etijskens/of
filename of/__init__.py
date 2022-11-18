@@ -82,6 +82,7 @@ def jobscript(
         script += """#SBATCH --account=astaff
 
 unset SLURM_EXPORT_ENV
+echo "JOB ID = $SLURM_JOB_ID"
 """
     script += """
 # Prepare OpenFOAM environment
@@ -108,10 +109,10 @@ blockMesh
         script += """rm -rf processor*
 foamDictionary -entry numberOfSubdomains -set {n_tasks} system/decomposeParDict
 decomposePar
-mpirun -np {n_tasks} renumberMesh -parallel -overwrite
+srun -np {n_tasks} renumberMesh -parallel -overwrite
 
 # Processing
-mpirun -np {n_tasks} {openfoam_solver} -parallel >& {case_name}.log"""
+srun -np {n_tasks} {openfoam_solver} -parallel >& {case_name}.log"""
 
     if not isinstance(walltime, str):
         walltime_str = walltime_to_str(walltime)
@@ -317,6 +318,7 @@ def postprocess( location:Union[str,Path] = '.', verbosity: bool = 0):
         walltimes = []
         n_cells = []
         for dir in dirs:
+            print(f"{dir=}")
             walltimes.append(get_mean_walltime_per_timestep(dir))
             n_cells.append(get_ncells(dir))
         n_cells = np.array(n_cells)
@@ -380,7 +382,7 @@ def postprocess( location:Union[str,Path] = '.', verbosity: bool = 0):
     
 #===================================================================================================
 if __name__ == "__main__":
-    pp = True
+    pp = False
 
     if VSC_INSTITUTE_CLUSTER == 'dodrio':
         case = '/dodrio/scratch/users/vsc20170/prj-astaff/vsc20170/exafoam/hpc/microbenchmarks/cavity-3d/8M/fixedIter'
@@ -392,13 +394,12 @@ if __name__ == "__main__":
     if pp:
         postprocess(dest_path)
     else:
-        
         run_all( case=case_path
         , destination = dest_path
         , openfoam_solver = 'icoFoam'     
         , max_nodes = 4
         , walltime = 1
-        , overwrite = True
+        , overwrite = False
         , submit = True
         , verbosity = 2
         )
