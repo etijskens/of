@@ -7,7 +7,7 @@ Package of
 On hortense need
 
     module load SciPy-bundle
-    module load matplotlibm
+    module load matplotlib
 
 On Vaughan 
 
@@ -18,9 +18,15 @@ from typing import Union
 from pathlib import Path
 from collections import namedtuple
 
+try:
+    import numpy as np
+    from matplotlib import pyplot
+except ModuleNotFoundError as x:
+    print(x)
+    print("Modules Numpy and matplotlib are needed for post-processing only.")
+    print("On dodrio, run `module load SciPy-bundle` and `module load matplotlib`")
+
 import click
-import numpy as np
-from matplotlib import pyplot
 
 __version__ = "0.3.0"
 
@@ -40,6 +46,7 @@ MODULES = {
                  ]
   , 'dodrio'  :  [ 'cluster/dodrio/cpu_rome'
                  , 'OpenFOAM/v2206-foss-2022a'
+                 , 'vsc-mympirun'
                  ]     
 }
 
@@ -82,6 +89,7 @@ def jobscript(
         script += """#SBATCH --account=astaff
 
 unset SLURM_EXPORT_ENV
+
 echo "JOB ID = $SLURM_JOB_ID"
 """
     script += """
@@ -97,27 +105,41 @@ module list
 source $FOAM_BASH
 
 # Preprocessing
-blockMesh
+"""
+    if VSC_INSTITUTE_CLUSTER == 'dodrio':
+        blockMesh = "# blockMesh # (pre-processing already done)"
+    else:
+        blockMesh = "blockMesh"
+    script += """{blockMesh}
 """
     if n_tasks == 1:
+        mpi_driver = ""
         script += """renumberMesh -overwrite
 
 # Processing
 {openfoam_solver} >& {case_name}.log
 """
     else:
-        script += """rm -rf processor*
-foamDictionary -entry numberOfSubdomains -set {n_tasks} system/decomposeParDict
+        script += """foamDictionary -entry numberOfSubdomains -set {n_tasks} system/decomposeParDict
+rm -rf processor*
 decomposePar
-srun -np {n_tasks} renumberMesh -parallel -overwrite
+"""
+        if VSC_INSTITUTE_CLUSTER == 'dodrio':
+            mpi_driver = "mympirun --universe"
+        else:
+            mpi_driver = "srun -np"
+            
+        script += """{mpi_driver} {n_tasks} renumberMesh -parallel -overwrite
 
 # Processing
-srun -np {n_tasks} {openfoam_solver} -parallel >& {case_name}.log"""
+{mpi_driver} {n_tasks} {openfoam_solver} -parallel >& {case_name}.log
+"""
 
     if not isinstance(walltime, str):
         walltime_str = walltime_to_str(walltime)
     # print(script)
-    return script.format(n_nodes=n_nodes, n_tasks=n_tasks, walltime=walltime_str, case_name=case_name, openfoam_solver=openfoam_solver)
+    return script.format(n_nodes=n_nodes, n_tasks=n_tasks, walltime=walltime_str, case_name=case_name, 
+                         openfoam_solver=openfoam_solver, blockMesh=blockMesh, mpi_driver=mpi_driver)
 
 
 #===================================================================================================
@@ -217,6 +239,12 @@ def run1( case:str
             click.secho(f"destination '{dest_path}' already exists. (Specify overwrite=True to remove and recreate it)", fg='blue')
             return
         
+    if VSC_INSTITUTE_CLUSTER == 'dodrio':
+        # Verify that blockMesh has been run.
+        p = case_path / 'constant/polyMesh/points'
+        if not p.exists():
+            raise RuntimeError("You must run blockMesh in the case directory.")
+
     shutil.copytree(case_path, dest_path)
 
     # jobscript
@@ -244,11 +272,12 @@ def run1( case:str
         subprocess.run(cmd, cwd=dest_path)
         click.echo(click.style(f"Job script '{script_path}' submitted in directory '{dest_path}'.", fg='green'))
     else:
-        click.echo(click.style(f"Job script '{script_path}' not submitted.", fg='red'))
+        click.echo(click.style(f"Job script '{script_path}' not submitted (submit==False).", fg='red'))
 
 
 #===================================================================================================
 def get_mean_walltime_per_timestep(file):
+    print(f"{file=}")
     if file.is_dir():
         file = file / (file.name + '.log')
     
@@ -273,15 +302,19 @@ def get_mean_walltime_per_timestep(file):
 
 #===================================================================================================
 def get_ncells(file):
-    """Read the number of cells from the OpenFOAM output"""
+    """Read the number of cells from the output. 
+
+    we are looking for line "Mesh region0 size: 8000000".
+    (The original approach looked for "nCells:" in the blockMesh output. )
+    """
     if file.is_dir():
         file = file / (file.name + '.stdout')
     with open(file) as f:
          for line in f:
-            match = re.match(r'  nCells: (\d+)', line)
+            match = re.match(r'Mesh (\w+) size: (\d+)', line)
             if match:
-                ncells = int(match.group(1))
-                return ncells       
+                ncells = int(match.group(2))
+                return ncells 
 
 
 #===================================================================================================
@@ -290,6 +323,14 @@ def postprocess( location:Union[str,Path] = '.', verbosity: bool = 0):
     
     :param location: parent directory containing the results
     """
+       
+    try:
+        np      
+        pyplot
+    except NameError:
+        print('Numpy and matplotlib must be available for post-processing.')
+        sys.exit(1)
+        
     location = Path(location)
     if not location.exists():
         raise FileNotFoundError(location)
@@ -319,8 +360,9 @@ def postprocess( location:Union[str,Path] = '.', verbosity: bool = 0):
         n_cells = []
         for dir in dirs:
             print(f"{dir=}")
-            walltimes.append(get_mean_walltime_per_timestep(dir))
-            n_cells.append(get_ncells(dir))
+            pdir = location / dir
+            walltimes.append(get_mean_walltime_per_timestep(pdir))
+            n_cells.append(get_ncells(pdir))
         n_cells = np.array(n_cells)
         walltimes = np.array(walltimes)
         cpu_times = walltimes * n_cores
@@ -382,7 +424,7 @@ def postprocess( location:Union[str,Path] = '.', verbosity: bool = 0):
     
 #===================================================================================================
 if __name__ == "__main__":
-    pp = False
+    pp = True
 
     if VSC_INSTITUTE_CLUSTER == 'dodrio':
         case = '/dodrio/scratch/users/vsc20170/prj-astaff/vsc20170/exafoam/hpc/microbenchmarks/cavity-3d/8M/fixedIter'
@@ -399,7 +441,7 @@ if __name__ == "__main__":
         , openfoam_solver = 'icoFoam'     
         , max_nodes = 4
         , walltime = 1
-        , overwrite = False
+        , overwrite = True
         , submit = True
         , verbosity = 2
         )
