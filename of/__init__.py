@@ -13,7 +13,7 @@ On Vaughan
 
     module load Python
 """
-import os, sys, re, subprocess, shutil
+import os, sys, re, subprocess, shutil, math
 from typing import Union
 from pathlib import Path
 from collections import namedtuple
@@ -283,9 +283,13 @@ def run1( case
 
 #===================================================================================================
 def get_mean_walltime_per_timestep(file):
-    print(f"{file=}")
+    # print(f"{file=}")
     if file.is_dir():
         file = file / (file.name + '.log')
+    
+    if not file.exists():
+        click.secho(f".log file '{file}' not found. Ignoring it.", fg='red')
+        return float('NAN')
     
     with open(file) as f:
         ExecutionTimes = []
@@ -315,6 +319,10 @@ def get_ncells(file):
     """
     if file.is_dir():
         file = file / (file.name + '.stdout')
+    if not file.exists():
+        click.secho(f".stdout file '{file}' not found. Ignoring it.", fg='red')
+        return float('NAN')
+    
     with open(file) as f:
          for line in f:
             match = re.match(r'Mesh (\w+) size: (\d+)', line)
@@ -329,10 +337,8 @@ def get_ncells(file):
 
 
 #===================================================================================================
-def postprocess( location:Union[str,Path] = '.', verbosity: bool = 0):
+def postprocess( case, results, verbosity):
     """Postprocess strong scaling test results.
-    
-    :param location: parent directory containing the results
     """
        
     try:
@@ -340,16 +346,29 @@ def postprocess( location:Union[str,Path] = '.', verbosity: bool = 0):
     except NameError:
         print('Numpy must be available for post-processing.')
         sys.exit(1)
-        
-    location = Path(location)
-    if not location.exists():
-        raise FileNotFoundError(location)
     
+    results = Path(results).resolve()
+    if not case:
+        results_name = results.name
+        pattern = r"(\w+)-strong-scaling-test"
+        m = re.match(pattern, results_name)
+        if m:
+            case = m[1]
+        else:
+            raise ValueError(f"Unable to extract case name from results directory {results}")
+    
+    if verbosity:
+        print(f"{case=}")
+        
+    if not results.exists():
+        raise FileNotFoundError(results)
+    
+    # Pick up the case directories.
     s = r'(\w+)-(\d+)x(\d+)cores'
     cases = {}
     n_cores = []
     Dir = namedtuple('Dir', ['name', 'n_nodes', 'n_tasks'])
-    for item in location.glob('*'):
+    for item in results.glob('*'):
         if item.is_dir():
             m = re.match(s, str(item.name))
             if m:
@@ -357,8 +376,10 @@ def postprocess( location:Union[str,Path] = '.', verbosity: bool = 0):
                 if not case in cases:
                     cases[case] = []
                 cases[case].append(Dir( item.name, int(m[2]),  int(m[2]) * int(m[3]) ))
+
+    if verbosity:
+       print(f"{cases=}")
     
-    print(f"{case=}")
     for case, dirs in cases.items():
         n_cores = np.array([dir.n_tasks for dir in dirs])
         dirs = np.array([dir.name for dir in dirs])
@@ -369,8 +390,8 @@ def postprocess( location:Union[str,Path] = '.', verbosity: bool = 0):
         walltimes = []
         n_cells = []
         for dir in dirs:
-            print(f"{dir=}")
-            pdir = location / dir
+            # print(f"{dir=}")
+            pdir = results / dir
             walltimes.append(get_mean_walltime_per_timestep(pdir))
             n_cells.append(get_ncells(pdir))
         n_cells = np.array(n_cells)
@@ -407,6 +428,10 @@ def postprocess( location:Union[str,Path] = '.', verbosity: bool = 0):
     print()
     print(output.getvalue())
     
+    # print to file
+    with open(results / (case + ".parallel_efficiency.txt"), mode='w') as f:
+        print(output.getvalue(), file=f)
+    
     # Produce plot and save .png
     try:
         pyplot
@@ -424,7 +449,7 @@ def postprocess( location:Union[str,Path] = '.', verbosity: bool = 0):
     ax1.set_ylabel('parallel efficiency')
     # ax1.set_axis([0, n_cores[-1], 0, 1])
     ax1.set_xscale('log')
-    ax2_tick_locations = n_cores
+    ax2_tick_resultss = n_cores
 
     def tick_function(ncores):
         labels = []
@@ -435,14 +460,18 @@ def postprocess( location:Union[str,Path] = '.', verbosity: bool = 0):
 
     ax2.set_xscale('log')
     ax2.set_xlim(ax1.get_xlim())
-    ax2.set_xticks(ax2_tick_locations)
-    ax2.set_xticklabels(tick_function(ax2_tick_locations))
+    ax2.set_xticks(ax2_tick_resultss)
+    ax2.set_xticklabels(tick_function(ax2_tick_resultss))
     
     for i in range(len(cells_per_core)):
         ax2.plot( [n_cores[i], n_cores[i]], [0,1])
-        pyplot.text(n_cores[i],0,f'{int(cells_per_core[i])} cells/core', rotation=90)
+        if math.isnan(cells_per_core[i]):
+            cpc = "NAN" 
+        else:
+            cpc = int(cells_per_core[i])
+        pyplot.text(n_cores[i],0,f'{cpc} cells/core', rotation=90)
     
-    pyplot.savefig(str(location / (case + ".parallel_efficiency.png")), dpi=200)
+    pyplot.savefig(str(results / (case + ".parallel_efficiency.png")), dpi=200)
     pyplot.show()
 
     return d

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Command line interface ofrun (no sub-commands)."""
+"""Command line interface sst-run (no sub-commands)."""
 
 import sys
 
