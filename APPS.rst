@@ -10,3 +10,11 @@ Applications
    :prog: pp-strong
    :show-nested:
 
+.. click:: of.cli_sst:main
+   :prog: sst
+   :show-nested:
+
+.. click:: of.cli_sst:main
+   :prog: sst
+   :show-nested:
+

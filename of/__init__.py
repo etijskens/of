@@ -17,6 +17,7 @@ import os, sys, re, subprocess, shutil
 from typing import Union
 from pathlib import Path
 from collections import namedtuple
+import io
 
 try:
     import numpy as np
@@ -152,6 +153,29 @@ def run_all( case:str
         , submit: bool = False
         , verbosity:bool = 0
     ):
+    
+    if not case:
+        case = Path('.').resolve()
+    else:
+        case = Path(case)
+    if not case.exists():
+        raise FileNotFoundError(f"Missing OpenFOAM case folder '{case}'.")
+    case_name = case.name
+    
+    if not destination:
+        destination = Path(case).parent / f"{case_name}-strong-scaling-test"
+        os.makedirs(destination, exist_ok=True) # just in case this didn't already exist
+    else:
+        destination = Path(destination)
+        if not case_path.exists():
+            raise FileNotFoundError(f"Missing OpenFOAM case folder '{case}'.")
+        
+    if verbosity>2:
+        print(f"{case=}\n{destination=}\n{openfoam_solver=}\n{max_nodes=}\n{walltime=}\n{overwrite=}\n{submit=}\n{verbosity=}")
+        if verbosity>=5:
+            print("\nexiting because verbosity >= 5.")
+            return
+
     n_nodes = [1]
     n_tasks = [NCORESPERNODE[VSC_INSTITUTE_CLUSTER]]
     while n_tasks[0] != 1:
@@ -160,8 +184,10 @@ def run_all( case:str
     while n_nodes[-1] < max_nodes:
         n_nodes.append(n_nodes[-1] * 2)
         n_tasks.append(n_tasks[-1] * 2)
-    # print(n_nodes)
-    # print(n_tasks)
+        
+    if verbosity >= 4:
+        print(f"{n_nodes=}")
+        print(f"{n_tasks=}")
         
     for nn, nt in zip(n_nodes, n_tasks):
         # print(nn,nt)
@@ -177,15 +203,15 @@ def run_all( case:str
           , verbosity = verbosity
         )
 #===================================================================================================
-def run1( case:str
-        , openfoam_solver:str         
-        , destination:str = ''
-        , n_nodes:int = 1
-        , n_tasks:int = 1
-        , walltime: Union[int,float,str] = 1
-        , overwrite:bool = False
-        , submit: bool = False
-        , verbosity:bool = 0
+def run1( case
+        , openfoam_solver
+        , destination
+        , n_nodes
+        , n_tasks
+        , walltime
+        , overwrite
+        , submit
+        , verbosity
     ):
     """Create and run an OpenFOAM case on n_nodes nodes with n_tasks MPI tasks.
 
@@ -203,77 +229,57 @@ def run1( case:str
     :param submit: if True the job script will be submitted.
     :param verbosity: print more output, 
 
-    """
-    #  verify that case path exists
-    case_path = Path(case)
-    if not case_path.exists():
-        raise FileNotFoundError(f"Missing OpenFOAM case '{case}'.")
-
-    # determine destination path and verify
-    if not destination:
-        # destination == '' (default value)
-        dest_path = (Path(case) / '..' / f'{case_path.name}-strong-scaling-test')
-
-    dest_path = case_path.parent if not destination else Path(destination)
-    if not dest_path.exists():
-        # raise FileNotFoundError(dest_path)
-        os.makedirs(dest_path, exist_ok=True)
-
-    case_name = case_path.name+'-{}x{}cores'.format(n_nodes, n_tasks if n_nodes == 1 else NCORESPERNODE[VSC_INSTITUTE_CLUSTER])
-
-    dest_path = dest_path / case_name
-    click.echo('\nPreparing case ' + click.style(f"{dest_path}", fg='green'))
-
-    if verbosity:
-        click.echo('case = '+click.style(f"{case}", fg='green'))
-        click.echo('dest = '+click.style(f"{dest_path}", fg='green'))
-        click.echo('cluster          = ' + click.style(f"{VSC_INSTITUTE_CLUSTER}", fg='green'))
-        click.echo('# nodes          = ' + click.style(f"{n_nodes}", fg='green'))
-        click.echo('# cores per node = ' + click.style(f"{NCORESPERNODE[VSC_INSTITUTE_CLUSTER]}", fg='green'))
-        click.echo('# mpi tasks      = ' + click.style(f"{n_tasks}", fg='green'))
-
-    if overwrite:
-        shutil.rmtree(dest_path, ignore_errors=True)
-    else:
-        if dest_path.exists():
-            click.secho(f"destination '{dest_path}' already exists. (Specify overwrite=True to remove and recreate it)", fg='blue')
-            return
-        
+    """    
+    
     if VSC_INSTITUTE_CLUSTER == 'dodrio':
-        # Verify that blockMesh has been run.
-        p = case_path / 'constant/polyMesh/points'
+        # Verify that blockMesh has been run in the case directory.
+        p = case / 'constant/polyMesh/points'
         if not p.exists():
             raise RuntimeError("You must run blockMesh in the case directory.")
 
-    shutil.copytree(case_path, dest_path)
+    run_case_name = f"{case.name}-{n_nodes}x{n_tasks//n_nodes}cores"
+    run_case = destination / run_case_name
+    click.echo('\nPreparing case ' + click.style(f"{run_case}\n    for {VSC_INSTITUTE_CLUSTER}", fg='green'))
 
-    # jobscript
-    job_script = jobscript(
-        n_nodes=n_nodes
-      , n_tasks=n_tasks
-      , walltime=walltime
-      , case_name=case_name
-      , openfoam_solver=openfoam_solver
-    )
-    script_path = dest_path / f'{case_name}.slurm'
-    if verbosity > 1:
-        line = 80 * '-'
-        print(line)
-        click.echo('jobscript = ' + click.style(f"{script_path}", fg='green'))
-        print(line)
-        click.secho(job_script, fg='green')
-        print(line)
-    with open( script_path, mode='w') as f:
-        f.write(job_script)
+    if overwrite:
+        shutil.rmtree(run_case, ignore_errors=True)
+    
+    run_case_jobscript_path = run_case / f'{run_case_name}.slurm'
+    if not run_case.exists():
+        # Copy the case
+        shutil.copytree(case, run_case)
 
-    if submit:
-        cmd = ['sbatch', script_path.name]
-        print(f'  > {" ".join(cmd)}')
-        subprocess.run(cmd, cwd=dest_path)
-        click.echo(click.style(f"Job script '{script_path}' submitted in directory '{dest_path}'.", fg='green'))
+        # Create and write jobscript
+        run_case_jobscript = jobscript(
+            n_nodes=n_nodes
+        , n_tasks=n_tasks
+        , walltime=walltime
+        , case_name=run_case_name
+        , openfoam_solver=openfoam_solver
+        )
+        with open( run_case_jobscript_path, mode='w') as f:
+            f.write(run_case_jobscript)
+            if verbosity > 1:
+                line = 80 * '-'
+                click.echo('jobscript written: ' + click.style(f"{run_case_jobscript_path}", fg='green'))
+
     else:
-        click.echo(click.style(f"Job script '{script_path}' not submitted (submit==False).", fg='red'))
-
+        click.secho(f"Folder '{run_case}' already exists. (Specify overwrite=True to remove and recreate it)", fg='blue')        
+        
+    # Submit the job if submit==True and the case directory does not have a .log file.
+    case_log_path = run_case / f'{run_case_name}.log'
+    if submit and not case_log_path.exists():
+        cmd = ['sbatch', run_case_jobscript_path.name]
+        print(f'  > {" ".join(cmd)}')
+        subprocess.run(cmd, cwd=run_case)
+        click.echo(click.style(f"Job script '{run_case_jobscript_path}' submitted in directory '{run_case}'.", fg='green'))
+    else:
+        click.echo(click.style(f"Job script '{run_case_jobscript_path}' not submitted.", fg='red'))
+        if case_log_path.exists():
+            click.echo(click.style(f"    (log-file already exists).", fg='red'))
+        else:
+            click.echo(click.style(f"    (submit == False).", fg='red'))
+            
 
 #===================================================================================================
 def get_mean_walltime_per_timestep(file):
@@ -315,6 +321,11 @@ def get_ncells(file):
             if match:
                 ncells = int(match.group(2))
                 return ncells 
+            match = re.match(r'Mesh size: (\d+)', line)
+            if match:
+                ncells = int(match.group(1))
+                return ncells 
+
 
 
 #===================================================================================================
@@ -326,9 +337,8 @@ def postprocess( location:Union[str,Path] = '.', verbosity: bool = 0):
        
     try:
         np      
-        pyplot
     except NameError:
-        print('Numpy and matplotlib must be available for post-processing.')
+        print('Numpy must be available for post-processing.')
         sys.exit(1)
         
     location = Path(location)
@@ -348,7 +358,7 @@ def postprocess( location:Union[str,Path] = '.', verbosity: bool = 0):
                     cases[case] = []
                 cases[case].append(Dir( item.name, int(m[2]),  int(m[2]) * int(m[3]) ))
     
-    print(f"{cases=}")
+    print(f"{case=}")
     for case, dirs in cases.items():
         n_cores = np.array([dir.n_tasks for dir in dirs])
         dirs = np.array([dir.name for dir in dirs])
@@ -372,28 +382,44 @@ def postprocess( location:Union[str,Path] = '.', verbosity: bool = 0):
         
         d = {
             '# cores' : n_cores
-        , 'walltime per timestep' : walltimes
-        , 'cpu_time per timestep' : cpu_times
-        , 'cells per core' : cells_per_core
-        , 'speedup' : speedup
-        , 'parallel efficiency' : parallel_efficiency
+          , 'walltime per timestep' : walltimes
+          , 'cpu_time per timestep' : cpu_times
+          , 'cells per core' : cells_per_core
+          , 'speedup' : speedup
+          , 'parallel efficiency' : parallel_efficiency
         }
     
-    print()
-    print(f"{     ' ':>10}{'walltime':>10}{'cpu_time':>10}{'#cells':>10}{      ' ':>8}{         ' ':>11}")
-    print(f"{     ' ':>10}{     'per':>10}{     'per':>10}{   'per':>10}{      ' ':>8}{  'parallel':>11}")
-    print(f"{'#cores':>10}{'timestep':>10}{'timestep':>10}{  'core':>10}{'speedup':>8}{'efficiency':>11}")
-    print()
+    # print to string
+    output = io.StringIO()
+    line = 59*'-'
+    print(line, file=output)
+    title = f"Case {case} (on {VSC_INSTITUTE_CLUSTER})"
+    print(f"{title:^59}", file=output)
+    print(line, file=output)
+    print(f"{     ' ':>10}{'walltime':>10}{'cpu_time':>10}{'#cells':>10}{      ' ':>8}{         ' ':>11}"  , file=output)
+    print(f"{     ' ':>10}{     'per':>10}{     'per':>10}{   'per':>10}{      ' ':>8}{  'parallel':>11}"  , file=output)
+    print(f"{'#cores':>10}{'timestep':>10}{'timestep':>10}{  'core':>10}{'speedup':>8}{'efficiency':>11}\n", file=output)
     for i in range(len(n_cores)):
-        print(f"{n_cores[i]:>10}{walltimes[i]:>10.3f}{cpu_times[i]:>10.3f}{cells_per_core[i]:>10.0f}{speedup[i]:>8.1f}{parallel_efficiency[i]:>11.3f}")
+        print(f"{n_cores[i]:>10}{walltimes[i]:>10.3f}{cpu_times[i]:>10.3f}{cells_per_core[i]:>10.0f}{speedup[i]:>8.1f}{parallel_efficiency[i]:>11.3f}", file=output)
+    print(line, file=output)
+    
+    # print to stdout
+    print()
+    print(output.getvalue())
     
     # Produce plot and save .png
+    try:
+        pyplot
+    except NameError:
+        print('Matplotlib must be available for further post-processing.')
+        sys.exit(1)
+    
     fig = pyplot.figure()
     ax1 = fig.add_subplot(111)
     ax2 = ax1.twiny()
     
     ax1.plot(n_cores, parallel_efficiency, 'o-')
-    ax1.set_title(case)
+    ax1.set_title(title)
     ax1.set_xlabel('# cores')
     ax1.set_ylabel('parallel efficiency')
     # ax1.set_axis([0, n_cores[-1], 0, 1])
@@ -423,6 +449,8 @@ def postprocess( location:Union[str,Path] = '.', verbosity: bool = 0):
     
     
 #===================================================================================================
+# code below just for quick testing
+
 if __name__ == "__main__":
     pp = True
 
