@@ -57,17 +57,21 @@ if VSC_INSTITUTE_CLUSTER not in NCORESPERNODE:
 
 
 #===================================================================================================
-def walltime_to_str(hours: Union[int,float]):
+def walltime_fmtd(value: Union[int,float,str]):
     """Convert hours to slurm wall time format HH:MM:SS
 
     :param float hours: walltime in hours.
     """
-    hh = int(hours)
-    minutes = (hours - hh) * 60
-    mm = int(minutes)
-    ss = int((minutes - mm) * 60)
-    s = f"{hh}:{mm:02}:{ss:02}"
-    return s
+    if isinstance(value, str):
+        return value
+    else:
+        # value is number of hours
+        hh = int(value)
+        minutes = (value - hh) * 60
+        mm = int(minutes)
+        ss = int((minutes - mm) * 60)
+        s = f"{hh}:{mm:02}:{ss:02}"
+        return s
 
 
 #===================================================================================================
@@ -78,76 +82,78 @@ def jobscript(
     , walltime: float
     , case_name: str
     , openfoam_solver: str
+    , verbosity: int
     ):
     
-    hybrid = max_tasks_per_node != NCORESPERNODE[VSC_INSTITUTE_CLUSTER] \
+    partial_nodes = max_tasks_per_node != NCORESPERNODE[VSC_INSTITUTE_CLUSTER] \
          and n_tasks > max_tasks_per_node
     
-    script = """#!/bin/bash
-#SBATCH --nodes={n_nodes} --exclusive
-#SBATCH --time={walltime}
-#SBATCH --job-name={case_name}
-#SBATCH -o %x.stdout
-#SBATCH -e %x.stderr
-"""
+    script =  [ "#!/bin/bash"
+              ,f"#SBATCH --nodes={n_nodes} --exclusive"
+              ,f"#SBATCH --time={walltime_fmtd(walltime)}"
+              ,f"#SBATCH --job-name={case_name}"
+              , "#SBATCH -o %x.stdout"
+              , "#SBATCH -e %x.stderr"
+              ]
     if VSC_INSTITUTE_CLUSTER == 'dodrio':
-        script += """#SBATCH --account=astaff
-
-unset SLURM_EXPORT_ENV
-
-echo "JOB ID = $SLURM_JOB_ID"
-"""
-    script += """
-# Prepare OpenFOAM environment
-module --force purge
-"""
+        script += [
+                "#SBATCH --account=astaff"
+              , ""
+              , "unset SLURM_EXPORT_ENV"
+              , 'echo "JOB ID = $SLURM_JOB_ID"'
+              ]
+    script += [ ""
+              , "module --force purge"
+    ]
     # specify which modules to load
     for m in MODULES[VSC_INSTITUTE_CLUSTER]:
-        script += f'module load {m}\n'
+        script.append(f'module load {m}')
+        
+    script += [ "module list"
+              , ""
+              , "# Prepare OpenFOAM environment"
+              , "source $FOAM_BASH"
+              , ""
+              ]
 
-    script += """
-module list
-source $FOAM_BASH
-
-# Preprocessing
-"""
+    script.append("# Preprocessing")
     if VSC_INSTITUTE_CLUSTER == 'dodrio':
+        # blockMesh couldn't run in a single process on dodrio and should be run beforehand
         blockMesh = "# blockMesh # (pre-processing already done)"
     else:
         blockMesh = "blockMesh"
-    script += """{blockMesh}
-"""
-    if n_tasks == 1:
-        mpi_driver = ""
-        script += """renumberMesh -overwrite
+    script.append(f"{blockMesh}")
 
-# Processing
-{openfoam_solver} >& {case_name}.log
-"""
+    if n_tasks == 1:
+        script += [ "renumberMesh -overwrite"
+                  , "# Processing"
+                  ,f"{openfoam_solver} >& {case_name}.log"
+                  ]
     else:
-        script += """foamDictionary -entry numberOfSubdomains -set {n_tasks} system/decomposeParDict
-rm -rf processor*
-decomposePar
-"""
         if VSC_INSTITUTE_CLUSTER == 'dodrio':
-            if hybrid:
+            if partial_nodes:
                 mpi_driver = f"mympirun --hybrid {max_tasks_per_node}"
             else:
                 mpi_driver = f"mympirun --universe {n_tasks}"
         else:
             mpi_driver = f"srun -np {n_tasks}"
             
-        script += """{mpi_driver} renumberMesh -parallel -overwrite
+        script += [f"foamDictionary -entry numberOfSubdomains -set {n_tasks} system/decomposeParDict"
+                  , "rm -rf processor*"
+                  , "decomposePar"
+                  ,f"{mpi_driver} renumberMesh -parallel -overwrite"
+                  , "# Processing"
+                  ,f"{mpi_driver} {openfoam_solver} -parallel >& {case_name}.log"
+                  ]
 
-# Processing
-{mpi_driver} {openfoam_solver} -parallel >& {case_name}.log
-"""
-
-    if not isinstance(walltime, str):
-        walltime_str = walltime_to_str(walltime)
-    # print(script)
-    return script.format(n_nodes=n_nodes, n_tasks=n_tasks, walltime=walltime_str, case_name=case_name, 
-                         openfoam_solver=openfoam_solver, blockMesh=blockMesh, mpi_driver=mpi_driver)
+    script = '\n'.join(script)
+    
+    if verbosity > 3:
+        print(80*'<')
+        print(script)
+        print(80*'>')
+        
+    return script
 
 
 #===================================================================================================
@@ -268,6 +274,7 @@ def run1( case
                                       , walltime=walltime
                                       , case_name=run_case_name
                                       , openfoam_solver=openfoam_solver
+                                      , verbosity=verbosity
                                       )
         with open( run_case_jobscript_path, mode='w') as f:
             f.write(run_case_jobscript)
@@ -289,7 +296,7 @@ def run1( case
         if case_log_path.exists():
             msg += 'log-file already exists.'
         else:
-            msg += 'submit == False.'
+            msg += "'--submit' not specified."
         click.secho(msg, fg='red')
             
 
