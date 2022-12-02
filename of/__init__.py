@@ -74,10 +74,14 @@ def walltime_to_str(hours: Union[int,float]):
 def jobscript(
       n_nodes: int
     , n_tasks: int
+    , max_tasks_per_node: int
     , walltime: float
     , case_name: str
     , openfoam_solver: str
     ):
+    
+    hybrid = max_tasks_per_node != NCORESPERNODE[VSC_INSTITUTE_CLUSTER] \
+         and n_tasks > max_tasks_per_node
     
     script = """#!/bin/bash
 #SBATCH --nodes={n_nodes} --exclusive
@@ -126,14 +130,17 @@ rm -rf processor*
 decomposePar
 """
         if VSC_INSTITUTE_CLUSTER == 'dodrio':
-            mpi_driver = "mympirun --universe"
+            if hybrid:
+                mpi_driver = f"mympirun --hybrid {max_tasks_per_node}"
+            else:
+                mpi_driver = f"mympirun --universe {n_tasks}"
         else:
-            mpi_driver = "srun -np"
+            mpi_driver = f"srun -np {n_tasks}"
             
-        script += """{mpi_driver} {n_tasks} renumberMesh -parallel -overwrite
+        script += """{mpi_driver} renumberMesh -parallel -overwrite
 
 # Processing
-{mpi_driver} {n_tasks} {openfoam_solver} -parallel >& {case_name}.log
+{mpi_driver} {openfoam_solver} -parallel >& {case_name}.log
 """
 
     if not isinstance(walltime, str):
@@ -148,12 +155,12 @@ def run_all( case:str
         , openfoam_solver:str         
         , destination:str = ''
         , max_nodes:int = 1
+        , max_cores_per_node = NCORESPERNODE[VSC_INSTITUTE_CLUSTER]
         , walltime: float = 1
         , overwrite:bool = False
         , submit: bool = False
         , verbosity:bool = 0
     ):
-    
     if not case:
         case = Path('.').resolve()
     else:
@@ -171,16 +178,18 @@ def run_all( case:str
             raise FileNotFoundError(f"Missing OpenFOAM case folder '{case}'.")
         
     if verbosity>2:
-        print(f"{case=}\n{destination=}\n{openfoam_solver=}\n{max_nodes=}\n{walltime=}\n{overwrite=}\n{submit=}\n{verbosity=}")
+        print(f"{case=}\n{destination=}\n{openfoam_solver=}\n{max_nodes=}\n{max_cores_per_node=}\n{walltime=}\n{overwrite=}\n{submit=}\n{verbosity=}")
         if verbosity>=5:
             print("\nexiting because verbosity >= 5.")
             return
 
     n_nodes = [1]
-    n_tasks = [NCORESPERNODE[VSC_INSTITUTE_CLUSTER]]
+    n_tasks = [ max_cores_per_node ]
+    # single node jobs
     while n_tasks[0] != 1:
         n_tasks.insert(0, n_tasks[0] // 2)
         n_nodes.insert(0, 1)
+    # multi-node jobs
     while n_nodes[-1] < max_nodes:
         n_nodes.append(n_nodes[-1] * 2)
         n_tasks.append(n_tasks[-1] * 2)
@@ -197,6 +206,7 @@ def run_all( case:str
           , destination=destination
           , n_nodes = nn
           , n_tasks = nt
+          , max_tasks_per_node = max_cores_per_node
           , walltime = walltime
           , overwrite = overwrite
           , submit = submit
@@ -208,6 +218,7 @@ def run1( case
         , destination
         , n_nodes
         , n_tasks
+        , max_tasks_per_node
         , walltime
         , overwrite
         , submit
@@ -222,7 +233,8 @@ def run1( case
     :param openfoam_solver: name of the solver used in the simulation. (Should be on the PATH).
     :param destination: path where the case will be copied to
     :param n_nodes: the number of nodes requested
-    :param n_tasks: the number of mpi tasks that will be started
+    :param n_tasks: the total number of mpi tasks that will be started
+    :param max_tasks_per_node: maximum number of mpi tasks per node that will be started
     :param walltime: the walltime requested, either a positive number or a 'HH:MM:SS' str.
     :param overwrite: if True, and the case directory already exists in the destination, the case will be
         removed and recreated (previous results will be lost).
@@ -239,7 +251,7 @@ def run1( case
 
     run_case_name = f"{case.name}-{n_nodes}x{n_tasks//n_nodes}cores"
     run_case = destination / run_case_name
-    click.echo('\nPreparing case ' + click.style(f"{run_case}\n    for {VSC_INSTITUTE_CLUSTER}", fg='green'))
+    click.echo('\nPreparing case for for {VSC_INSTITUTE_CLUSTER}:\n  ' + click.style(f"{run_case}", fg='green'))
 
     if overwrite:
         shutil.rmtree(run_case, ignore_errors=True)
@@ -250,18 +262,17 @@ def run1( case
         shutil.copytree(case, run_case)
 
         # Create and write jobscript
-        run_case_jobscript = jobscript(
-            n_nodes=n_nodes
-        , n_tasks=n_tasks
-        , walltime=walltime
-        , case_name=run_case_name
-        , openfoam_solver=openfoam_solver
-        )
+        run_case_jobscript = jobscript( n_nodes=n_nodes
+                                      , n_tasks=n_tasks 
+                                      , max_tasks_per_node=max_tasks_per_node
+                                      , walltime=walltime
+                                      , case_name=run_case_name
+                                      , openfoam_solver=openfoam_solver
+                                      )
         with open( run_case_jobscript_path, mode='w') as f:
             f.write(run_case_jobscript)
             if verbosity > 1:
-                line = 80 * '-'
-                click.echo('jobscript written: ' + click.style(f"{run_case_jobscript_path}", fg='green'))
+                click.echo('  Jobscript written.')
 
     else:
         click.secho(f"Folder '{run_case}' already exists. (Specify overwrite=True to remove and recreate it)", fg='blue')        
@@ -272,13 +283,14 @@ def run1( case
         cmd = ['sbatch', run_case_jobscript_path.name]
         print(f'  > {" ".join(cmd)}')
         subprocess.run(cmd, cwd=run_case)
-        click.echo(click.style(f"Job script '{run_case_jobscript_path}' submitted in directory '{run_case}'.", fg='green'))
+        click.secho("  Submitted.", fg='green')
     else:
-        click.echo(click.style(f"Job script '{run_case_jobscript_path}' not submitted.", fg='red'))
+        msg = "  NOT submitted: "
         if case_log_path.exists():
-            click.echo(click.style(f"    (log-file already exists).", fg='red'))
+            msg += 'log-file already exists.'
         else:
-            click.echo(click.style(f"    (submit == False).", fg='red'))
+            msg += 'submit == False.'
+        click.secho(msg, fg='red')
             
 
 #===================================================================================================

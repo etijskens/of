@@ -36,7 +36,9 @@ import click
              , help='maximum number of nodes requested. Job are created for 1 node, 2 nodes, 4 nodes, ... '
                     'Single node jobs are also created with nc cores, nc/2 cores, nc/4 cores, ..., 1 core, '
                     'where nc is the number of cores on a node.'
-             
+             )
+@click.option('--max-cpn', '-c', default=of.NCORESPERNODE[of.VSC_INSTITUTE_CLUSTER]
+             , help='maximum number of cores per node allowed. This option allows to use not fully occupied nodes.'
              )
 @click.option('--walltime', '-w', default=1
              , help='walltime limit of the job. Format is hh:mm:ss or a number of hours.'
@@ -53,7 +55,7 @@ import click
              , help="The verbosity of the program."
              )
 def main( case, destination, solver
-        , max_nodes, walltime
+        , max_nodes, max_cpn, walltime
         , overwrite, submit
         , verbosity
     ):
@@ -62,7 +64,7 @@ def main( case, destination, solver
     Copy an OpenFOAM case and perform a (strong) scaling test.
     """
     of.run_all( case=case, openfoam_solver=solver, destination=destination
-              , max_nodes=max_nodes, walltime=walltime
+              , max_nodes=max_nodes, max_cores_per_node=max_cpn, walltime=walltime
               , overwrite=overwrite, submit=submit
               , verbosity=verbosity
               )
