@@ -101,10 +101,11 @@ def jobscript(
                 "#SBATCH --account=astaff"
               , ""
               , "unset SLURM_EXPORT_ENV"
-              , 'echo "JOB ID = $SLURM_JOB_ID"'
               ]
-    script += [ ""
-              , "module --force purge"
+    script += [ ''
+              , 'echo "JOB ID = $SLURM_JOB_ID"'
+              , ''
+              , 'module --force purge'
     ]
     # specify which modules to load
     for m in MODULES[VSC_INSTITUTE_CLUSTER]:
@@ -142,7 +143,11 @@ def jobscript(
             else:
                 mpi_driver = f"mympirun --universe {n_tasks}"
         else:
-            mpi_driver = f"srun -np {n_tasks}"
+            if partial_nodes:
+                mpi_driver = f"srun --ntasks {n_tasks} --distribution block:cyclic:cyclic"
+            else:
+                mpi_driver = f"srun --ntasks {n_tasks}"
+                
             
         script += [f"foamDictionary -entry numberOfSubdomains -set {n_tasks} system/decomposeParDict"
                   , "rm -rf processor*"
@@ -376,12 +381,17 @@ def postprocess( case, results, verbosity):
     results = Path(results).resolve()
     if not case:
         results_name = results.name
-        pattern = r"(\w+)-strong-scaling-test"
+        pattern = r"(\w+)-strong-scaling-test-(\d+).(\d+)"
         m = re.match(pattern, results_name)
         if m:
             case = m[1]
         else:
-            raise ValueError(f"Unable to extract case name from results directory {results}")
+            pattern = r'(\w+)-(\d+)x(\d+)cores'
+            m = re.match(pattern, results_name)
+            if m:
+                case = m[1]
+            else:
+                raise ValueError(f"Unable to extract case name from results directory {results}")    
     
     if verbosity:
         print(f"{case=}")
@@ -389,19 +399,35 @@ def postprocess( case, results, verbosity):
     if not results.exists():
         raise FileNotFoundError(results)
     
-    # Pick up the case directories.
-    s = r'(\w+)-(\d+)x(\d+)cores'
+    # Gather the results
     cases = {}
     n_cores = []
     Dir = namedtuple('Dir', ['name', 'n_nodes', 'n_tasks'])
-    for item in results.glob('*'):
-        if item.is_dir():
-            m = re.match(s, str(item.name))
-            if m:
-                case = m[1]
-                if not case in cases:
-                    cases[case] = []
-                cases[case].append(Dir( item.name, int(m[2]),  int(m[2]) * int(m[3]) ))
+    
+    # <results> may be 
+    #   . a results directory, containing several executed cases, or 
+    #   . a result directory, i.e. a single executed case
+    s = r'(\w+)-(\d+)x(\d+)cores'
+    m = re.match(s, str(results.name))
+    if m:
+        # a (single) result directory
+        single_result = True
+        case = m[1]
+        if not case in cases:
+            cases[case] = []
+        cases[case].append(Dir( results.name, int(m[2]),  int(m[2]) * int(m[3]) ))
+    
+    else:
+        single_result = False
+        # Pick up the case directories.
+        for item in results.glob('*'):
+            if item.is_dir():
+                m = re.match(s, str(item.name))
+                if m:
+                    case = m[1]
+                    if not case in cases:
+                        cases[case] = []
+                    cases[case].append(Dir( item.name, int(m[2]),  int(m[2]) * int(m[3]) ))
 
     if verbosity:
        print(f"{cases=}")
@@ -420,7 +446,10 @@ def postprocess( case, results, verbosity):
         n_cells = []
         for dir in dirs:
             # print(f"{dir=}")
-            pdir = results / dir
+            if single_result:
+                pdir = results
+            else:
+                pdir = results / dir
             walltimes.append(get_mean_walltime_per_timestep(pdir))
             n_cells.append(get_ncells(pdir))
         n_cells = np.array(n_cells)
@@ -461,6 +490,9 @@ def postprocess( case, results, verbosity):
     # print to file
     with open(results / (case + ".parallel_efficiency.txt"), mode='w') as f:
         print(output.getvalue(), file=f)
+    
+    if single_result:
+        return
     
     # Produce plot and save .png
     try:
