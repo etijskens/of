@@ -10,9 +10,9 @@ except ModuleNotFoundError:
     from pathlib import Path
     p = str(Path(__file__).parent.parent)
     sys.path.insert(0,p)
-    import of
     # for sp in sys.path:
     #     print(f"{sp=}")
+    import of
 
 import click
 
@@ -25,20 +25,16 @@ import click
              , help='OpenFOAM solver to be used.'
              )
 @click.option('--destination', '-d', default=''
-             , help="Location where case is copied to. Default is the parent of the --case directory. "
-                    "The directory is named '{case.name}-strong-scaling-test'."
+             , help="Location where case is copied to. Default is the parent of the --case directory, "
+                    "in which case the directory is named '{case.name}-strong-scaling-test[-{postfix}]'."
              )
-# @click.option('--n_tasks'
-#              , help='number of cores requested on a single node. Sets nnodes to 1.'
-#              , default=1
-#              )
 @click.option('--max-nodes', '-n', default=1
              , help='maximum number of nodes requested. Job are created for 1 node, 2 nodes, 4 nodes, ... '
                     'Single node jobs are also created with nc cores, nc/2 cores, nc/4 cores, ..., 1 core, '
                     'where nc is the number of cores on a node.'
              )
 @click.option('--max-cores', '-c', default=of.NCORESPERNODE[of.VSC_INSTITUTE_CLUSTER]
-             , help='maximum number of cores per node allowed. This option allows to use partially occupied nodes.'
+             , help='maximum number of cores per node allowed. This option allows to use not fully occupied nodes.'
              )
 @click.option('--walltime', '-w', default=1
              , help='walltime limit of the job. Format is hh:mm:ss or a number of hours.'

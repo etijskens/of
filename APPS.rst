@@ -2,19 +2,11 @@
 Applications
 ************
 
-.. click:: of.cli_ofrun:main
+.. click:: of.cli_run:main
    :prog: ofrun
    :show-nested:
 
-.. click:: of.cli_pp_strong:main
+.. click:: of.cli_post:main
    :prog: pp-strong
-   :show-nested:
-
-.. click:: of.cli_sst:main
-   :prog: sst
-   :show-nested:
-
-.. click:: of.cli_sst:main
-   :prog: sst
    :show-nested:
 

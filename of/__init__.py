@@ -85,8 +85,9 @@ def jobscript(
     , verbosity: int
     ):
     
+    # is this job using the rquested nodes partially (i.e. less tasks per node than cores available per node)?
     partial_nodes = max_tasks_per_node != NCORESPERNODE[VSC_INSTITUTE_CLUSTER] \
-         and n_tasks > max_tasks_per_node
+                 or n_tasks < NCORESPERNODE[VSC_INSTITUTE_CLUSTER]
     
     script =  [ "#!/bin/bash"
               ,f"#SBATCH --nodes={n_nodes} --exclusive"
@@ -131,8 +132,13 @@ def jobscript(
                   ]
     else:
         if VSC_INSTITUTE_CLUSTER == 'dodrio':
+            # --hybrid is way faster than --universe for partial nodes. --hybrid implies 'spread' pinning on a node,
+            # i.e. processes are as far away from each other as possible, whereas --universe implies 'compact' pinning,
+            # i.e. processes are as close together as possible.
+            # the difference is large: for 1x16 cores --universe 16 takes 93.1s per timestep as opposed o 2.87s for 
+            # --hybrid 16 (case = hpc/microbenchmarks/cavity-3d/8M/fixedIter)
             if partial_nodes:
-                mpi_driver = f"mympirun --hybrid {max_tasks_per_node}"
+                mpi_driver = f"mympirun --hybrid {min(max_tasks_per_node, n_tasks)}"
             else:
                 mpi_driver = f"mympirun --universe {n_tasks}"
         else:
@@ -160,6 +166,7 @@ def jobscript(
 def run_all( case:str
         , openfoam_solver:str         
         , destination:str = ''
+        , postfix=''
         , max_nodes:int = 1
         , max_cores_per_node = NCORESPERNODE[VSC_INSTITUTE_CLUSTER]
         , walltime: float = 1
@@ -174,9 +181,9 @@ def run_all( case:str
     if not case.exists():
         raise FileNotFoundError(f"Missing OpenFOAM case folder '{case}'.")
     case_name = case.name
-    
+     
     if not destination:
-        destination = Path(case).parent / f"{case_name}-strong-scaling-test"
+        destination = Path(case).parent / f"{case_name}-strong-scaling-test-{NCORESPERNODE[VSC_INSTITUTE_CLUSTER]}.{max_cores_per_node}"
         os.makedirs(destination, exist_ok=True) # just in case this didn't already exist
     else:
         destination = Path(destination)
@@ -400,9 +407,12 @@ def postprocess( case, results, verbosity):
        print(f"{cases=}")
     
     for case, dirs in cases.items():
+        n_nodes = np.array([dir.n_nodes for dir in dirs])
         n_cores = np.array([dir.n_tasks for dir in dirs])
+        
         dirs = np.array([dir.name for dir in dirs])
         p = n_cores.argsort()
+        n_nodes = n_nodes[p]
         n_cores = n_cores[p]
         dirs = dirs[p]
         
@@ -420,8 +430,9 @@ def postprocess( case, results, verbosity):
         speedup = walltimes[0]/walltimes
         parallel_efficiency = speedup/n_cores
         
-        d = {
-            '# cores' : n_cores
+        d = {            
+            '# nodes' : n_nodes
+          , '# cores' : n_cores
           , 'walltime per timestep' : walltimes
           , 'cpu_time per timestep' : cpu_times
           , 'cells per core' : cells_per_core
@@ -431,16 +442,16 @@ def postprocess( case, results, verbosity):
     
     # print to string
     output = io.StringIO()
-    line = 59*'-'
+    line = 69*'-'
     print(line, file=output)
     title = f"Case {case} (on {VSC_INSTITUTE_CLUSTER})"
-    print(f"{title:^59}", file=output)
+    print(f"{title:^69}", file=output)
     print(line, file=output)
-    print(f"{     ' ':>10}{'walltime':>10}{'cpu_time':>10}{'#cells':>10}{      ' ':>8}{         ' ':>11}"  , file=output)
-    print(f"{     ' ':>10}{     'per':>10}{     'per':>10}{   'per':>10}{      ' ':>8}{  'parallel':>11}"  , file=output)
-    print(f"{'#cores':>10}{'timestep':>10}{'timestep':>10}{  'core':>10}{'speedup':>8}{'efficiency':>11}\n", file=output)
+    print(f"{     ' ':>10}{     ' ':>10}{'walltime':>10}{'cpu_time':>10}{'#cells':>10}{      ' ':>8}{         ' ':>11}"  , file=output)
+    print(f"{     ' ':>10}{     ' ':>10}{     'per':>10}{     'per':>10}{   'per':>10}{      ' ':>8}{  'parallel':>11}"  , file=output)
+    print(f"{'#nodes':>10}{'#cores':>10}{'timestep':>10}{'timestep':>10}{  'core':>10}{'speedup':>8}{'efficiency':>11}\n", file=output)
     for i in range(len(n_cores)):
-        print(f"{n_cores[i]:>10}{walltimes[i]:>10.3f}{cpu_times[i]:>10.3f}{cells_per_core[i]:>10.0f}{speedup[i]:>8.1f}{parallel_efficiency[i]:>11.3f}", file=output)
+        print(f"{n_nodes[i]:>10}{n_cores[i]:>10}{walltimes[i]:>10.3f}{cpu_times[i]:>10.3f}{cells_per_core[i]:>10.0f}{speedup[i]:>8.1f}{parallel_efficiency[i]:>11.3f}", file=output)
     print(line, file=output)
     
     # print to stdout
