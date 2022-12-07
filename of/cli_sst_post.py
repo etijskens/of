@@ -26,16 +26,19 @@ import click
 @click.option('--results', '-r', default='.'
              , help='Directory containing the results of the scaling test.'
              )
+@click.option('--clean/--no-clean', is_flag=True, default=True
+             , help='Remove processor* directories to free disk space. Default is True.'
+             )
 @click.option('--verbosity', '-v', count=True, default=0
              , help="The verbosity of the program."
              )
-def main(case, results, verbosity):
+def main(case, results, clean, verbosity):
     """Command line interface sst_post.
     
     Post-process a strong scaling test.
     """
 
-    of.postprocess(case=case, results=results, verbosity=verbosity)    
+    of.postprocess(case=case, results=results, clean=clean, verbosity=verbosity)    
 
 if __name__ == "__main__":
     sys.exit(main())  # pragma: no cover

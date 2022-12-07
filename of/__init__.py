@@ -13,7 +13,7 @@ On Vaughan
 
     module load Python
 """
-import os, sys, re, subprocess, shutil, math
+import os, sys, re, subprocess, shutil, math, pprint
 from typing import Union
 from pathlib import Path
 from collections import namedtuple
@@ -368,10 +368,10 @@ def get_ncells(file):
 
 
 #===================================================================================================
-def postprocess( case, results, verbosity):
+def postprocess( case, results, clean, verbosity):
     """Postprocess strong scaling test results.
     """
-       
+    
     try:
         np      
     except NameError:
@@ -379,6 +379,7 @@ def postprocess( case, results, verbosity):
         sys.exit(1)
     
     results = Path(results).resolve()
+    
     if not case:
         results_name = results.name
         pattern = r"(\w+)-strong-scaling-test-(\d+).(\d+)"
@@ -428,9 +429,25 @@ def postprocess( case, results, verbosity):
                     if not case in cases:
                         cases[case] = []
                     cases[case].append(Dir( item.name, int(m[2]),  int(m[2]) * int(m[3]) ))
+                    if clean:
+                        if verbosity>1:
+                            print(f"\nRemoving processor* in {str(item)} ...")
+                            count = 0
+                        for dir in  item.glob('processor*'):
+                            if verbosity>1:
+                                print(f"Removing {str(dir.name)}")
+                                count += 1
+                            shutil.rmtree(dir)
+                        if verbosity>1:
+                            if count:
+                                print(f"  Removed {count} processor* directories.")
+                            else:
+                                print("  None found.")
 
-    if verbosity:
-       print(f"{cases=}")
+    if verbosity>1:
+        print("\nCases:")
+        pp = pprint.PrettyPrinter(indent=2)
+        pp.pprint(cases)
     
     for case, dirs in cases.items():
         n_nodes = np.array([dir.n_nodes for dir in dirs])
