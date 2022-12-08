@@ -123,7 +123,7 @@ def jobscript(
         # blockMesh couldn't run in a single process on dodrio and should be run beforehand
         blockMesh = "# blockMesh # (pre-processing already done)"
     else:
-        blockMesh = "blockMesh"
+        blockMesh = "# blockMesh"
     script.append(f"{blockMesh}")
 
     if n_tasks == 1:
@@ -350,21 +350,25 @@ def get_ncells(file):
     """
     if file.is_dir():
         file = file / (file.name + '.stdout')
+        
     if not file.exists():
         click.secho(f".stdout file '{file}' not found. Ignoring it.", fg='red')
         return float('NAN')
     
     with open(file) as f:
          for line in f:
+             
             match = re.match(r'Mesh (\w+) size: (\d+)', line)
             if match:
                 ncells = int(match.group(2))
                 return ncells 
+
             match = re.match(r'Mesh size: (\d+)', line)
             if match:
                 ncells = int(match.group(1))
                 return ncells 
 
+    return float('NAN')
 
 
 #===================================================================================================
@@ -430,17 +434,18 @@ def postprocess( case, results, clean, verbosity):
                         cases[case] = []
                     cases[case].append(Dir( item.name, int(m[2]),  int(m[2]) * int(m[3]) ))
                     if clean:
-                        if verbosity>1:
-                            print(f"\nRemoving processor* in {str(item)} ...")
-                            count = 0
+                        count = -1
                         for dir in  item.glob('processor*'):
+                            if count == -1:
+                                print(f"\nRemoving directories 'processor*' in {str(item)} ...")
+                                count = 0
                             if verbosity>1:
-                                print(f"Removing {str(dir.name)}")
+                                print(f"Removing directory {str(dir.name)}")
                                 count += 1
                             shutil.rmtree(dir)
                         if verbosity>1:
                             if count:
-                                print(f"  Removed {count} processor* directories.")
+                                print(f"  Removed {count} 'processor*' directories.")
                             else:
                                 print("  None found.")
 
@@ -469,6 +474,7 @@ def postprocess( case, results, clean, verbosity):
                 pdir = results / dir
             walltimes.append(get_mean_walltime_per_timestep(pdir))
             n_cells.append(get_ncells(pdir))
+        print("??", n_cells)
         n_cells = np.array(n_cells)
         walltimes = np.array(walltimes)
         cpu_times = walltimes * n_cores
@@ -476,6 +482,7 @@ def postprocess( case, results, clean, verbosity):
         speedup = walltimes[0]/walltimes
         parallel_efficiency = speedup/n_cores
         
+        max_cores_per_nodes = n_cores[-1]//n_nodes[-1]
         d = {            
             '# nodes' : n_nodes
           , '# cores' : n_cores
@@ -484,74 +491,79 @@ def postprocess( case, results, clean, verbosity):
           , 'cells per core' : cells_per_core
           , 'speedup' : speedup
           , 'parallel efficiency' : parallel_efficiency
+          , 'max_cores_per_nodes' : max_cores_per_nodes
         }
     
-    # print to string
-    output = io.StringIO()
-    line = 69*'-'
-    print(line, file=output)
-    title = f"Case {case} (on {VSC_INSTITUTE_CLUSTER})"
-    print(f"{title:^69}", file=output)
-    print(line, file=output)
-    print(f"{     ' ':>10}{     ' ':>10}{'walltime':>10}{'cpu_time':>10}{'#cells':>10}{      ' ':>8}{         ' ':>11}"  , file=output)
-    print(f"{     ' ':>10}{     ' ':>10}{     'per':>10}{     'per':>10}{   'per':>10}{      ' ':>8}{  'parallel':>11}"  , file=output)
-    print(f"{'#nodes':>10}{'#cores':>10}{'timestep':>10}{'timestep':>10}{  'core':>10}{'speedup':>8}{'efficiency':>11}\n", file=output)
-    for i in range(len(n_cores)):
-        print(f"{n_nodes[i]:>10}{n_cores[i]:>10}{walltimes[i]:>10.3f}{cpu_times[i]:>10.3f}{cells_per_core[i]:>10.0f}{speedup[i]:>8.1f}{parallel_efficiency[i]:>11.3f}", file=output)
-    print(line, file=output)
-    
-    # print to stdout
-    print()
-    print(output.getvalue())
-    
-    # print to file
-    with open(results / (case + ".parallel_efficiency.txt"), mode='w') as f:
-        print(output.getvalue(), file=f)
-    
-    if single_result:
-        return
-    
-    # Produce plot and save .png
-    try:
-        pyplot
-    except NameError:
-        print('Matplotlib must be available for further post-processing.')
-        sys.exit(1)
-    
-    fig = pyplot.figure()
-    ax1 = fig.add_subplot(111)
-    ax2 = ax1.twiny()
-    
-    ax1.plot(n_cores, parallel_efficiency, 'o-')
-    ax1.set_title(title)
-    ax1.set_xlabel('# cores')
-    ax1.set_ylabel('parallel efficiency')
-    # ax1.set_axis([0, n_cores[-1], 0, 1])
-    ax1.set_xscale('log')
-    ax2_tick_resultss = n_cores
+        # print to string
+        output = io.StringIO()
+        line = 69*'-'
+        print(line, file=output)
+        title = f"Case {case} (on {VSC_INSTITUTE_CLUSTER} {d['max_cores_per_nodes']}/{NCORESPERNODE[VSC_INSTITUTE_CLUSTER]} cores per node)"
+        print(f"{title:^69}", file=output)
+        print(line, file=output)
+        print(f"{     ' ':>10}{     ' ':>10}{'walltime':>10}{'cpu_time':>10}{'#cells':>10}{      ' ':>8}{         ' ':>11}"  , file=output)
+        print(f"{     ' ':>10}{     ' ':>10}{     'per':>10}{     'per':>10}{   'per':>10}{      ' ':>8}{  'parallel':>11}"  , file=output)
+        print(f"{'#nodes':>10}{'#cores':>10}{'timestep':>10}{'timestep':>10}{  'core':>10}{'speedup':>8}{'efficiency':>11}\n", file=output)
+        for i in range(len(n_cores)):
+            print(f"{n_nodes[i]:>10}{n_cores[i]:>10}{walltimes[i]:>10.3f}{cpu_times[i]:>10.3f}{cells_per_core[i]:>10.0f}{speedup[i]:>8.1f}{parallel_efficiency[i]:>11.3f}", file=output)
+        print(line, file=output)
+        print(f"Maxumum number of cores per node: {d['max_cores_per_nodes']}/{NCORESPERNODE[VSC_INSTITUTE_CLUSTER]}", file=output)
+        
+        # print to stdout
+        print()
+        print(output.getvalue())
+        
+        # print to file
+        with open(results / (case + ".parallel_efficiency.txt"), mode='w') as f:
+            print(output.getvalue(), file=f)
+        
+        if single_result:
+            return
+        
+        # Produce plot and save .png
+        for i in range(len(parallel_efficiency)):
+            if math.isnan(parallel_efficiency[i]):
+                parallel_efficiency[i] = 0
+        try:
+            pyplot
+        except NameError:
+            print('Matplotlib must be available for further post-processing.')
+            sys.exit(1)
+        
+        fig = pyplot.figure()
+        ax1 = fig.add_subplot(111)
+        ax2 = ax1.twiny()
+        
+        ax1.plot(n_cores, parallel_efficiency, 'o-')
+        ax1.set_title(title)
+        ax1.set_xlabel('# cores')
+        ax1.set_ylabel('parallel efficiency')
+        # ax1.set_axis([0, n_cores[-1], 0, 1])
+        ax1.set_xscale('log')
+        ax2_tick_resultss = n_cores
 
-    def tick_function(ncores):
-        labels = []
-        for i in range(len(ncores)):
-            label = f'{ncores[i]}'
-            labels.append(label)
-        return labels
+        def tick_function(ncores):
+            labels = []
+            for i in range(len(ncores)):
+                label = f'{n_nodes[i]}/{ncores[i]}'
+                labels.append(label)
+            return labels
 
-    ax2.set_xscale('log')
-    ax2.set_xlim(ax1.get_xlim())
-    ax2.set_xticks(ax2_tick_resultss)
-    ax2.set_xticklabels(tick_function(ax2_tick_resultss))
-    
-    for i in range(len(cells_per_core)):
-        ax2.plot( [n_cores[i], n_cores[i]], [0,1])
-        if math.isnan(cells_per_core[i]):
-            cpc = "NAN" 
-        else:
-            cpc = int(cells_per_core[i])
-        pyplot.text(n_cores[i],0,f'{cpc} cells/core', rotation=90)
-    
-    pyplot.savefig(str(results / (case + ".parallel_efficiency.png")), dpi=200)
-    pyplot.show()
+        ax2.set_xscale('log')
+        ax2.set_xlim(ax1.get_xlim())
+        ax2.set_xticks(ax2_tick_resultss)
+        ax2.set_xticklabels(tick_function(ax2_tick_resultss))
+        
+        for i in range(len(cells_per_core)):
+            ax2.plot( [n_cores[i], n_cores[i]], [0,1])
+            if math.isnan(cells_per_core[i]):
+                cpc = "NAN" 
+            else:
+                cpc = int(cells_per_core[i])
+            pyplot.text(n_cores[i],0,f'{cpc} cells/core', rotation=90)
+        
+        pyplot.savefig(str(results / (case + ".parallel_efficiency.png")), dpi=200)
+        pyplot.show()
 
     return d
     
