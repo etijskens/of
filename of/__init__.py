@@ -498,7 +498,7 @@ def postprocess( case, results, clean, verbosity):
         output = io.StringIO()
         line = 69*'-'
         print(line, file=output)
-        title = f"Case {case} (on {VSC_INSTITUTE_CLUSTER} {d['max_cores_per_nodes']}/{NCORESPERNODE[VSC_INSTITUTE_CLUSTER]} cores per node)"
+        title = f"{results_name} (on {VSC_INSTITUTE_CLUSTER})"
         print(f"{title:^69}", file=output)
         print(line, file=output)
         print(f"{     ' ':>10}{     ' ':>10}{'walltime':>10}{'cpu_time':>10}{'#cells':>10}{      ' ':>8}{         ' ':>11}"  , file=output)
