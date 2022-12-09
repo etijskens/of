@@ -514,7 +514,7 @@ def postprocess( case, results, clean, verbosity):
         print(output.getvalue())
         
         # print to file
-        with open(results / (case + ".parallel_efficiency.txt"), mode='w') as f:
+        with open(results / (results_name + ".parallel_efficiency.txt"), mode='w') as f:
             print(output.getvalue(), file=f)
         
         if single_result:
@@ -562,7 +562,7 @@ def postprocess( case, results, clean, verbosity):
                 cpc = int(cells_per_core[i])
             pyplot.text(n_cores[i],0,f'{cpc} cells/core', rotation=90)
         
-        pyplot.savefig(str(results / (case + ".parallel_efficiency.png")), dpi=200)
+        pyplot.savefig(str(results / (results_name + ".parallel_efficiency.png")), dpi=200)
         pyplot.show()
 
     return d
