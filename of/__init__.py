@@ -13,6 +13,8 @@ On Vaughan
 
     module load Python
 """
+__version__ = "0.7.4"
+
 import os, sys, re, subprocess, shutil, math, pprint
 from typing import Union
 from pathlib import Path
@@ -29,7 +31,6 @@ except ModuleNotFoundError as x:
 
 import click
 
-__version__ = "0.3.0"
 
 #===================================================================================================
 NCORESPERNODE = {

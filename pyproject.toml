@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "of"
-version = "0.7.3"
+version = "0.7.4"
 description = "<Enter a one-sentence description of this project here.>"
 authors = ["Bert Tijskens <engelbert.tijskens@uantwerpen.be>"]
 license = "MIT"
