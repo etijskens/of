@@ -433,7 +433,7 @@ def postprocess( case, results, clean, verbosity):
                     if not case in cases:
                         cases[case] = []
                     cases[case].append(Dir( item.name, int(m[2]),  int(m[2]) * int(m[3]) ))
-                    if clean:
+                    if clean and has_completed(item,verbosity=verbosity):
                         count = -1
                         for dir in  item.glob('processor*'):
                             if count == -1:
@@ -568,6 +568,36 @@ def postprocess( case, results, clean, verbosity):
     return d
     
     
+#===================================================================================================
+def has_completed(run_case, verbosity=0):
+    """Check if this run_case directory has completed. 
+    
+    This is tested by looking for the text
+    "End(\s+)\Z" if it is a single core simulation,
+    "End(\s+)Finalising parallel run(\s+)\Z" if it is a multi-core or multi-node simulation
+    at the end of the .log file
+    """
+    run_case_name = run_case.name
+    run_case_log = run_case / (run_case_name + '.log')
+    
+    if not run_case_log.exists():
+        return False
+    
+    with open(run_case_log, "r") as f:
+        text = f.read()
+        
+    if '1x1'in run_case_name:
+        pattern = r"End(\w+)\Z"
+    else:
+        pattern = r"End(\s+)Finalising parallel run(\s+)\Z"
+    
+    m = re.match(pattern, text) 
+    b = bool(m)
+    if verbosity > 3:
+        print(f"{run_case=} has completed.")
+    return b
+        
+        
 #===================================================================================================
 # code below just for quick testing
 
