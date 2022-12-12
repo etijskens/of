@@ -1,0 +1,28 @@
+#!/bin/bash
+# Produce strong scaling test results.
+# Run `sst-run --help` to have the command line arguments explained.
+# Run `sst-run -D [command-line-arguments]` to debug (with pdb).
+# This bash script works on 
+#   . vaughan 
+#   . dodrio 
+# It is typically placed in $VSC_DATA/.local/bin (which should be on the PATH)
+
+
+case $VSC_INSTITUTE_CLUSTER in
+
+  "dodrio")
+    workspace="/dodrio/scratch/users/vsc20170/prj-astaff/vsc20170"
+    ;;
+
+  "vaughan" | "leibniz")
+    workspace="/user/antwerpen/201/vsc20170/scratch/workspace"
+    ;;
+esac
+
+
+if [ "$1" = "-D" ]; then
+    # start debugging
+    python -m pdb ${workspace}/exafoam/of/of/cli_sst_run.py ${@:2}
+else
+    python ${workspace}/exafoam/of/of/cli_sst_run.py $@
+fi

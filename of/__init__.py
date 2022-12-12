@@ -13,7 +13,7 @@ On Vaughan
 
     module load Python
 """
-__version__ = "0.7.4"
+__version__ = "0.7.5"
 
 import os, sys, re, subprocess, shutil, math, pprint
 from typing import Union
