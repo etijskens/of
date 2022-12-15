@@ -508,7 +508,7 @@ def postprocess( case, results, clean, verbosity):
         for i in range(len(n_cores)):
             print(f"{n_nodes[i]:>10}{n_cores[i]:>10}{walltimes[i]:>10.3f}{cpu_times[i]:>10.3f}{cells_per_core[i]:>10.0f}{speedup[i]:>8.1f}{parallel_efficiency[i]:>11.3f}", file=output)
         print(line, file=output)
-        print(f"Maxumum number of cores per node: {d['max_cores_per_nodes']}/{NCORESPERNODE[VSC_INSTITUTE_CLUSTER]}", file=output)
+        print(f"Maximum number of cores per node: {d['max_cores_per_nodes']}/{NCORESPERNODE[VSC_INSTITUTE_CLUSTER]}", file=output)
         
         # print to stdout
         print()
