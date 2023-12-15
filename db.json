@@ -1,29 +1,2 @@
 {
-  "ofrun": {
-    "context": {
-      "verbosity": 1,
-      "project_path": "/Users/etijskens/software/dev/workspace/of",
-      "default_project_path": true,
-      "clear_log": false,
-      "_cfg_filename": "micc3.cfg",
-      "_cfg_dir": "/Users/etijskens/.micc2",
-      "invoked_subcommand": "add",
-      "overwrite_preferences": {},
-      "add_name": "ofrun",
-      "flag_cli": true,
-      "flag_clisub": false,
-      "flag_py": false,
-      "flag_f90": false,
-      "flag_cpp": false,
-      "overwrite": false,
-      "backup": false,
-      "package_name": "of",
-      "templates": [
-        "app-single-command"
-      ]
-    },
-    "APPS.rst": ".. click:: of.cli_ofrun:main\n   :prog: ofrun\n   :show-nested:\n\n",
-    "pyproject.toml": "ofrun = \"refactoring_dev:cli_ofrun.main\"\n",
-    "of/__init__.py": "import of.cli_ofrun\n"
-  }
 }

@@ -1,0 +1,27 @@
+#!/bin/bash
+
+# Postprocess strong scaling test results.
+# This bash script works on 
+#   . vaughan 
+#   . dodrio 
+# Run `sst-post --help` to have the command line arguments explained
+# Run `sst-post -D [command-line-arguments]` to debug (with pdb)
+
+case $VSC_INSTITUTE_CLUSTER in
+
+  "dodrio")
+    workspace="/dodrio/scratch/users/vsc20170/prj-astaff/vsc20170"
+    ;;
+
+  "vaughan" | "leibniz")
+    workspace="/user/antwerpen/201/vsc20170/scratch/workspace"
+    ;;
+
+esac
+
+if [ "$1" = "-D" ]; then
+    # start debugging
+    python -m pdb ${workspace}/exafoam/of/of/cli_sst_post.py ${@:2}
+else
+    python ${workspace}/exafoam/of/of/cli_sst_post.py $@
+fi
